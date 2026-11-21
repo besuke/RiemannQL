@@ -19,7 +19,7 @@
 | 5 | 2019年6月・Multi-Curve／`MulticurveBootstrapping`／IV Cash Flows | 一部対応 | OIS の予測・割引カーブ分離、FX スワップおよび定額・MtM 元本の通貨ベーシスからのカーブ構築、キャッシュフロー表と NPV は実装済み。原例の Euribor 予測カーブは対象外。同一通貨の OIS ベーシスによる汎用ブートストラップも対象外。 | `R/ois_swaps.R:133`、`R/xccy.R:27` |
 | 6 | 2019年7月・V 校正／VI モンテカルロ | 計算機能は対応 | Hull–White、SABR、LMM、PRDC にモデル別の校正がある。乱数、経路生成、モンテカルロ評価も実装済み。QuantLib の校正・MC クラス階層の再現は設計上の対象外。 | `crates/rmql/src/hull_white.rs`、`crates/rmql/src/sabr.rs`、`crates/rmql/src/lmm_market.rs`、`crates/rmql/src/prdc.rs` |
 | 7 | 2019年8月・無裁定価格理論、FTAP | 理論の適用例あり | LMM の Spot・Terminal 測度で、ニューメレールに応じてドリフトと割引を切り替える。 | `crates/rmql/src/lmm_market.rs:79` |
-| 8 | 2019年9月・VII Tree Framework | 一部対応 | 株式オプションの CRR 二項木は欧州型と米国型に対応。汎用 3 項木は未実装。Hull–White の早期行使には状態格子を使う。 | `crates/rmql/src/options.rs:489` |
+| 8 | 2019年9月・VII Tree Framework | 一部対応 | 株式オプションの CRR 二項木はヨーロピアン型とアメリカン型に対応。汎用 3 項木は未実装。Hull–White の早期行使には状態格子を使う。 | `crates/rmql/src/options.rs:489` |
 | 9 | 2019年9月・`Bonds` | 一部再現 | 固定利付債、ステップアップ、アモチ、キャッシュフロー、利回り、カーブ評価は対応。原例の IBOR 変動利付債は対象外。 | `crates/rmql/src/instruments/fixed_rate_bond.rs`、`crates/rmql/src/bond_curve.rs` |
 | 10 | 2019年10月・VIII 有限差分／IX 結論 | 有限差分は未実装 | PDE ソルバー（有限差分法）は未実装。二項木、状態格子上の求積、MC は利用できる。IX は総括のため設計資料扱い。 | — |
 | 11 | 2019年12月・Appendix A／B | 設計比較 | デザインパターンやコード規約の補遺。実装件数の集計から外し、設計資料として扱う。 | `docs/specification.md` |
@@ -30,14 +30,14 @@
 
 | # | 更新 | 判定 | rmql との照合 | 参照 |
 |---|---|---|---|---|
-| 12 | 2020年2月・Cap／Swaption の Black モデル | 主要な価格計算に対応 | Black・Bachelier のキャップレット、欧州スワップションの評価がある。後決め RFR キャップレットも実装済み。専用の Cap 一括評価入口はなく、各キャップレットを集計する。 | `crates/rmql/src/options.rs`、`crates/rmql/src/lmm.rs`、`crates/rmql/src/fmm.rs` |
+| 12 | 2020年2月・Cap／Swaption の Black モデル | 主要な価格計算に対応 | Black・Bachelier のキャップレット、ヨーロピアン・スワップションの評価がある。後決め RFR キャップレットも実装済み。専用の Cap 一括評価入口はなく、各キャップレットを集計する。 | `crates/rmql/src/options.rs`、`crates/rmql/src/lmm.rs`、`crates/rmql/src/fmm.rs` |
 | 13 | 2020年10月・Short Rate Models／Vasicek | 一部対応 | ガウス型短期金利モデルは 1 因子 Hull–White で扱える。Vasicek 固有のパラメータを受け取る独立モデルは未実装（信用ポートフォリオの Vasicek モデルとは別項目）。 | `crates/rmql/src/hull_white.rs:45` |
-| 14 | 2020年10月・Hull–White 解析解 | 対応 | Rust に割引債価格、R に割引債オプションと Jamshidian の欧州スワップションがある。スワップションは $a$・$\sigma$ の自動微分も返す（時間依存ドリフトによる初期カーブ適合と、測度の下での無裁定価格付けは区別する）。 | `crates/rmql/src/hull_white.rs:45`、`R/rate_models.R:64` |
-| 15 | 2020年11月・3 項木とバーミューダン | 商品に対応、方式が異なる | 状態格子上の後ろ向き計算を使う。R の既定はバーミューダンが台形則（`spacing = 0.05`）、コール債が Gauss–Hermite（`nodes = 24, spacing = 0`）。3 項木は未実装。 | `R/rate_models.R:21`、`R/rate_models.R:78` |
-| 16 | 2020年12月・時間依存 $a(t), \sigma(t)$ の校正 | 一部対応 | 定数 $a, \sigma$ を欧州オプション価格に Levenberg–Marquardt と自動微分で校正する（$a$ 固定で $\sigma$ のみ校正も可）。3 項木による区分定数 $a(t), \sigma(t)$ の校正は未実装。 | `R/rate_models.R:110` |
+| 14 | 2020年10月・Hull–White 解析解 | 対応 | Rust に割引債価格、R に割引債オプションと Jamshidian のヨーロピアン・スワップションがある。スワップションは $a$・$\sigma$ の自動微分も返す（時間依存ドリフトによる初期カーブ適合と、測度の下での無裁定価格付けは区別する）。 | `crates/rmql/src/hull_white.rs:45`、`R/rate_models.R:64` |
+| 15 | 2020年11月・3 項木とバーミューダン | 商品に対応、方式が異なる | 状態格子上のバックワード・インダクションを使う。R の既定はバーミューダンが台形則（`spacing = 0.05`）、コール債が Gauss–Hermite（`nodes = 24, spacing = 0`）。3 項木は未実装。 | `R/rate_models.R:21`、`R/rate_models.R:78` |
+| 16 | 2020年12月・時間依存 $a(t), \sigma(t)$ の校正 | 一部対応 | 定数 $a, \sigma$ をヨーロピアン・オプション価格に Levenberg–Marquardt と自動微分で校正する（$a$ 固定で $\sigma$ のみ校正も可）。3 項木による区分定数 $a(t), \sigma(t)$ の校正は未実装。 | `R/rate_models.R:110` |
 | 17 | 2021年1月・期待値演算、Feynman–Kac／フーリエ | 理論編（汎用エンジン未実装） | モデル別の解析式や数値求積はある。汎用の PDE ソルバーと特性関数からのフーリエ価格評価エンジンは未実装。 | — |
 | 18 | 2021年1月・`CallableBonds` | 一部再現 | コール付き・コールなしの価格、発行体コールの価値、行使判断と境界まで取得可能。市場価格からコール債 OAS を逆算する専用 API は未実装。 | `R/rate_models.R:87`、`R/rate_models.R:95` |
-| 19 | 2021年2月・`BermudanSwaption` | 一部再現 | 欧州スワップションで 1 因子 Hull–White を校正し、バーミューダンを評価できる。G2++、Black–Karasinski、3 項木・有限差分を含む原例の比較は未再現。 | `R/rate_models.R:78` |
+| 19 | 2021年2月・`BermudanSwaption` | 一部再現 | ヨーロピアン・スワップションで 1 因子 Hull–White を校正し、バーミューダンを評価できる。G2++、Black–Karasinski、3 項木・有限差分を含む原例の比較は未再現。 | `R/rate_models.R:78` |
 | 20 | 2021年3月・Affine Term Structure Model | 一部対応 | Hull–White の割引債価格は短期金利に対して指数アフィン形で実装済み。CIR と章で扱う拡張モデルは未実装（※アフィン性だけで短期金利が非負になるわけではない点に留意）。 | `crates/rmql/src/hull_white.rs:86` |
 | 21 | 2021年4月・対数正規型短期金利モデル | 未実装 | BDT、Black–Karasinski ともに専用モデル・校正なし。 | — |
 | 22 | 2021年6月・Markov Functional | 未実装 | オプション市場価格から状態変数と金利・債券価格の写像を構築して評価する機能はない。 | — |
@@ -56,10 +56,10 @@
 | 28 | 2022年6月・LMM 校正 | 一部対応 | 相関の減衰係数をスワップションボラに合わせる機能と、相関を固定した Brigo–Mercurio の逐次（cascade）校正がある。後者は 1 期間物を含む完全なクオート三角形を要求する。更新記事の Andersen–Piterbarg 方式とは校正手順が異なる。 | `crates/rmql/src/lmm_market.rs:975` |
 | 29 | 2022年10月・LMM モンテカルロ高速化 | 一部対応 | LMM 経路で因子数を縮約できる。経路生成は擬似乱数で逐次処理する。Sobol と Brownian Bridge は株式の Black–Scholes 経路で使える。 | `crates/rmql/src/lmm_market.rs`、`crates/rmql/src/math/sobol.rs` |
 | 30 | 2022年12月・離散化バイアス | 対策あり | LMM/FMM で Predictor–Corrector を選べる。R API の既定値は `"euler"` なので、対策を使うには明示指定が必要。 | `R/lmm_market.R:94` |
-| 31 | 2023年1月・Longstaff–Schwartz | 対応 | 株式の米国型・バーミューダン、LMM/FMM のバーミューダン、3 因子 PRDC の発行体コールを R から評価できる。株式では回帰用と評価用の経路を分ける設定もある。 | `R/longstaff_schwartz.R:45`、`crates/rmql/src/lmm_market.rs`、`crates/rmql/src/prdc.rs` |
-| 32 | 2023年4月・MC 感応度 | 一部対応 | 欧州型 1 ステップ MC と基本 PRDC に経路別 AAD がある。3 因子コーラブル PRDC は、スポット・カーブに経路別微分（＋カーブ AD）、ボラ・金利パラメータ・相関に共通乱数（CRN）による中心差分を使う。欧州型 MC のガンマにはペイオフの平滑化（`smoothing`）が必要。Likelihood Ratio 法は未実装。 | `crates/rmql/src/options.rs:608`、`crates/rmql/src/prdc.rs:1018` |
+| 31 | 2023年1月・Longstaff–Schwartz | 対応 | 株式のアメリカン型・バーミューダン、LMM/FMM のバーミューダン、3 因子 PRDC の発行体コールを R から評価できる。株式では回帰用と評価用の経路を分ける設定もある。 | `R/longstaff_schwartz.R:45`、`crates/rmql/src/lmm_market.rs`、`crates/rmql/src/prdc.rs` |
+| 32 | 2023年4月・MC 感応度 | 一部対応 | ヨーロピアン型 1 ステップ MC と基本 PRDC に経路別 AAD がある。3 因子コーラブル PRDC は、スポット・カーブに経路別微分（＋カーブ AD）、ボラ・金利パラメータ・相関に共通乱数（CRN）による中心差分を使う。ヨーロピアン型 MC のガンマにはペイオフの平滑化（`smoothing`）が必要。Likelihood Ratio 法は未実装。 | `crates/rmql/src/options.rs:608`、`crates/rmql/src/prdc.rs:1018` |
 | 33 | 2023年10月・Dupire／Heston | 関連機能あり（本体未実装） | SABR のインプライド・ボラ計算と校正、FX スマイル補間は実装済み。Dupire の局所ボラ、Heston の価格評価・経路生成は未実装。 | `crates/rmql/src/sabr.rs`、`crates/rmql/src/fx_smile.rs` |
-| 34 | 2023年11月・導入手順と `EquityOption` 改訂 | 一部再現 | 現行の R サンプルで解析解、米国型近似 2 方式（BAW・Bjerksund–Stensland 1993）、CRR を比較できる。原例に列挙された全エンジンの比較は未再現。 | `inst/examples/quantlib_examples/equity_option.R:1` |
+| 34 | 2023年11月・導入手順と `EquityOption` 改訂 | 一部再現 | 現行の R サンプルで解析解、アメリカン型近似 2 方式（BAW・Bjerksund–Stensland 1993）、CRR を比較できる。原例に列挙された全エンジンの比較は未再現。 | `inst/examples/quantlib_examples/equity_option.R:1` |
 | 35 | 2023年12月・`MulticurveBootstrapping` 改訂 | OIS 部分を再現可能 | 予測・割引分離とスワップ評価を R で組める。改訂版の Euribor 側のヘルパー・予測カーブは対象外（#5 を参照）。 | `R/ois_swaps.R:133` |
 
 ---
@@ -69,9 +69,9 @@
 | # | 更新 | 判定 | rmql との照合 | 参照 |
 |---|---|---|---|---|
 | 36 | 2024年1月・`Bonds` 改訂 | 一部再現 | 固定利付債の価格・経過利息・日程・キャッシュフローは対応。割引債の専用コンストラクターはなく、IBOR 変動利付債は対象外。 | `crates/rmql/src/instruments/fixed_rate_bond.rs` |
-| 37 | 2024年4月・`CallableBonds`／`BermudanSwaption` 改訂 | 一部再現 | 外生パラメータでのコール債評価と、欧州スワップション校正後の 1 因子 Hull–White バーミューダン評価が可能。3 モデル比較と原例の数値エンジン（3 項木・有限差分）は未再現。 | `R/rate_models.R:78`、`R/rate_models.R:87` |
+| 37 | 2024年4月・`CallableBonds`／`BermudanSwaption` 改訂 | 一部再現 | 外生パラメータでのコール債評価と、ヨーロピアン・スワップション校正後の 1 因子 Hull–White バーミューダン評価が可能。3 モデル比較と原例の数値エンジン（3 項木・有限差分）は未再現。 | `R/rate_models.R:78`、`R/rate_models.R:87` |
 | 38 | 2024年8月・`Gaussian1dModels` 改訂 | 例は未再現 | 通常の 1 因子 Hull–White 評価はある。`calibrationBasket()` の自動生成、GSR／Markov Functional、CMS 評価は未実装。 | — |
-| 39 | 2024年9月・`Replication` | 部品のみ対応 | 欧州型プットとバリアプットの価格は計算できる。デジタルオプションの専用価格 API と静的複製ポートフォリオの構築は未実装。 | `crates/rmql/src/options.rs` |
+| 39 | 2024年9月・`Replication` | 部品のみ対応 | ヨーロピアン・プットとバリアプットの価格は計算できる。デジタルオプションの専用価格 API と静的複製ポートフォリオの構築は未実装。 | `crates/rmql/src/options.rs` |
 | 40 | 2024年10月・`FittedBondCurve` | 未実装 | 債券価格からのブートストラップはある。Nelson–Siegel、Svensson、スプラインなどのパラメトリック当てはめは未実装。 | `crates/rmql/src/bond_curve.rs` |
 | 41 | 2024年10月・`DiscreteHedging` | 例は未再現 | 株価経路とデルタは取得できる。リバランスごとの株式・現金残高を追い、満期の複製誤差分布を返す専用機能は未実装。 | — |
 | 42 | 2024年12月・実践編 `CDS` | 価格計算に対応 | MidPoint／ISDA、スプレッド・アップフロントからのハザードカーブ構築がある。 | `crates/rmql/src/cds.rs`、`R/cds.R:36` |

@@ -297,7 +297,7 @@ $$C(S)=a+bS+cS^2.$$
 
 Longstaff–Schwartz法（LS法）は、早期行使できるオプションをモンテカルロで評価する代表的な方法である。バミューダ型には指定された行使日を使い、アメリカン型には有限個の行使日を設けて近似する。
 
-Putを例にすると、ある行使時点で知りたいのは「今行使するか、持ち続けるか」である。
+プットを例にすると、ある行使時点で知りたいのは「今行使するか、持ち続けるか」である。
 
 $$\underbrace{H(S)=(K-S)^+}_{\text{即時行使価値}}
 \qquad\text{と}\qquad
@@ -325,7 +325,7 @@ LSを拡張する逐次実験計画の研究では、推定した行使境界の
 
 [^financial_function_modeling-1]: Gramacy and Ludkovski, [Sequential Design for Optimal Stopping Problems](https://arxiv.org/abs/1309.3832); Ludkovski, [Kriging Metamodels and Experimental Design for Bermudan Option Pricing](https://arxiv.org/abs/1509.02179)。Rによる比較実装として、[mlOSP論文](https://arxiv.org/abs/2012.00729)と[著者の公開コード](https://github.com/mludkov/mlOSP)がある。
 
-これは、深いITM・OTMを一律にBlack–Scholesの欧州型価格へ置き換える方法とは異なる。早期行使権を維持したまま、学習に使う計算点の置き方を工夫する。
+これは、深いITM・OTMを一律にBlack–Scholesのヨーロピアン型価格へ置き換える方法とは異なる。早期行使権を維持したまま、学習に使う計算点の置き方を工夫する。
 
 基底の選択、係数の推定、計算点の配置を分けて考えると、モデルをどう改善するかが整理しやすい。**関数を複雑にするだけでなく、どの判断のために、どこまで計算するかもモデル開発の一部となる。**
 
