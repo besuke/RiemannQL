@@ -53,7 +53,10 @@ impl PrdcTerms {
         if n == 0 || self.accrual_fractions.len() != n || self.fixed_rates.len() != n {
             return invalid("a note needs coupon times, accrual fractions and fixed rates of the same length".into());
         }
-        if self.coupon_times[0] <= 0.0 || self.coupon_times.windows(2).any(|w| w[1] <= w[0]) {
+        if !(self.coupon_times[0] > 0.0)
+            || self.coupon_times.iter().any(|t| !t.is_finite())
+            || self.coupon_times.windows(2).any(|w| !(w[1] > w[0]))
+        {
             return invalid("coupon times must be positive and increasing".into());
         }
         if !(self.fx_base > 0.0) || !(self.leverage > 0.0) {
@@ -643,7 +646,11 @@ pub fn generate_prdc_three_factor_paths(
     seed: u64,
 ) -> Result<PrdcThreeFactorPaths, Error> {
     let correlation = model.check()?;
-    if coupon_times.is_empty() || coupon_times[0] <= 0.0 || coupon_times.windows(2).any(|w| w[1] <= w[0]) {
+    if coupon_times.is_empty()
+        || !(coupon_times[0] > 0.0)
+        || coupon_times.iter().any(|t| !t.is_finite())
+        || coupon_times.windows(2).any(|w| !(w[1] > w[0]))
+    {
         return invalid("coupon times must be positive and increasing".into());
     }
     if paths < 2 || steps_per_year == 0 || paths.saturating_mul(coupon_times.len()) > 100_000_000 {
@@ -717,7 +724,9 @@ pub fn generate_prdc_three_factor_paths(
             let (mut fd, mut ff) = (Vec::with_capacity(coupon_times.len()), Vec::with_capacity(coupon_times.len()));
             for (k, step) in grid.windows(2).enumerate() {
                 let h = step[1] - step[0];
-                let z: Vec<f64> = (0..active.len()).map(|j| generate_standard_normal(seed, p as u64, (3 * k + j) as u64)).collect();
+                // the stream index is the factor's own (domestic 0, foreign 1, FX 2), so that a zero rate
+                // volatility leaves the other factors' random numbers as they are
+                let z: Vec<f64> = active.iter().map(|&a| generate_standard_normal(seed, p as u64, (3 * k + a) as u64)).collect();
                 let mut shock = [0.0; 3];
                 for (row, &a) in active.iter().enumerate() {
                     shock[a] = steps[k].0[row].iter().zip(&z).map(|(l, x)| l * x).sum();

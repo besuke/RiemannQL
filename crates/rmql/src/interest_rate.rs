@@ -79,14 +79,15 @@ impl<T: Operand> InterestRate<T> {
                 reason: "positive compound factor required".into(),
             });
         }
-        let rate = if compound.primal() == 1.0 {
-            if t < 0.0 {
+        let rate = if compound.primal() == 1.0 && t == 0.0 {
+            compound.like(0.0)
+        } else {
+            // for a compound of 1 and t > 0 the formulas below give 0 and keep the dependence on `compound`
+            if compound.primal() == 1.0 && t < 0.0 {
                 return Err(Error::InvalidInput {
                     reason: format!("non negative time ({t}) required"),
                 });
             }
-            compound.like(0.0)
-        } else {
             if t <= 0.0 {
                 return Err(Error::InvalidInput {
                     reason: format!("positive time ({t}) required"),

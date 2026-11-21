@@ -129,12 +129,28 @@ pub fn compute_flows_npv_bps(
     include_settlement_flows: bool,
     npv_date: Date,
 ) -> Result<FlowsValue, Error> {
-    let at = curve.discount(npv_date)?;
     let n = dates.len();
+    if amounts.len() != n || nominals.len() != n || accruals.len() != n {
+        return Err(Error::InvalidInput {
+            reason: format!(
+                "dates, amounts, nominals and accruals must have the same length ({n}, {}, {}, {})",
+                amounts.len(),
+                nominals.len(),
+                accruals.len()
+            ),
+        });
+    }
+    let at = curve.discount(npv_date)?;
     let (mut discounts, mut npvs, mut bpss) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     for i in 0..n {
         let occurred = dates[i] < settlement || (dates[i] == settlement && !include_settlement_flows);
-        let discount = curve.discount(dates[i])? / at;
+        // a flow that has occurred adds nothing, so a date the curve cannot evaluate (before its
+        // reference date) only leaves a NaN discount
+        let discount = if occurred {
+            curve.discount(dates[i]).map_or(f64::NAN, |d| d / at)
+        } else {
+            curve.discount(dates[i])? / at
+        };
         discounts.push(discount);
         npvs.push(if occurred { 0.0 } else { amounts[i] * discount });
         bpss.push(if occurred { 0.0 } else { nominals[i] * accruals[i] * discount * 1e-4 });
@@ -311,5 +327,7 @@ pub fn compute_irr(
     // -duration * NPV). The v1.42 form is kept so that the iterations match.
     let f = |r: f64| Ok(target - compute_npv(leg, &convention.rate(r)?, incl, settlement, npv_date)?);
     let df = |r: f64| modified_duration(leg, &convention.rate(r)?, incl, settlement, npv_date);
-    solve_newton_safe(f, df, solver.accuracy, solver.guess, solver.guess / 10.0, solver.max_iterations)
+    // a guess of 0 would give a step of 0 and no bracket
+    let step = if solver.guess == 0.0 { 0.01 } else { (solver.guess / 10.0).abs() };
+    solve_newton_safe(f, df, solver.accuracy, solver.guess, step, solver.max_iterations)
 }

@@ -341,13 +341,20 @@ pub fn compute_traffic_light(exceptions: usize, observations: usize, confidence_
     let p = 1.0 - confidence_level;
     let n = observations as f64;
     // pmf(k + 1) = pmf(k) (n - k) / (k + 1) p / (1 - p), from pmf(0) = (1 - p)^n
-    let mut pmf = (n * (1.0 - p).ln()).exp();
-    let mut cumulative = pmf;
+    // in logarithms (log-sum-exp), since (1 - p)^n underflows for many observations
+    let step = (p / (1.0 - p)).ln();
+    let mut log_pmf = n * (1.0 - p).ln();
+    let (mut max, mut sum) = (log_pmf, 1.0_f64);
     for k in 0..exceptions {
-        pmf *= (n - k as f64) / (k as f64 + 1.0) * p / (1.0 - p);
-        cumulative += pmf;
+        log_pmf += ((n - k as f64) / (k as f64 + 1.0)).ln() + step;
+        if log_pmf > max {
+            sum = sum * (max - log_pmf).exp() + 1.0;
+            max = log_pmf;
+        } else {
+            sum += (log_pmf - max).exp();
+        }
     }
-    let cumulative = cumulative.min(1.0);
+    let cumulative = (max + sum.ln()).exp().min(1.0);
     let zone = if cumulative < 0.95 {
         TrafficLight::Green
     } else if cumulative < 0.9999 {

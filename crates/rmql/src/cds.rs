@@ -479,7 +479,8 @@ pub fn compute_isda_value<T: Operand>(
     }
     nodes.sort();
     nodes.dedup();
-    if nodes.is_empty() {
+    // the last interval must reach the maturity, also when every node lies before it
+    if nodes.last().map_or(true, |&last| last < maturity) {
         nodes.push(maturity);
     }
     let survival_of = |d: Date| hazard.survival(d);
@@ -499,7 +500,7 @@ pub fn compute_isda_value<T: Operand>(
         let hhat = q0.ln() - q1.ln();
         let f = fhat + hhat;
         protection = protection
-            + if f.primal() < 1e-4 {
+            + if f.primal().abs() < 1e-4 {
                 let f2 = f * f;
                 p0 * q0 * hhat * (f2 * f2 * (1.0 / 120.0) - f2 * f * (1.0 / 24.0) + f2 * (1.0 / 6.0) - f * 0.5 + 1.0)
             } else {
@@ -544,7 +545,7 @@ pub fn compute_isda_value<T: Operand>(
                 let hhat = q0.ln() - q1.ln();
                 let f = fhat + hhat;
                 accrual = accrual
-                    + if f.primal() < 1e-4 {
+                    + if f.primal().abs() < 1e-4 {
                         let f2 = f * f;
                         hhat * p0 * q0
                             * ((f2 * (1.0 / 6.0) - f2 * f * (1.0 / 24.0) - f * 0.5 + 1.0) * (t0 - tstart)
@@ -1025,4 +1026,22 @@ mod tests {
         assert!(HazardCurve::new(d(2026, 11, 2), act365(), vec![], Vec::<f64>::new()).is_err());
         assert!(bootstrap_hazard_curve(&curve_spec(CdsEngine::MidPoint, &[]), &curve(0.02)).is_err());
     }
+
+    #[test]
+    fn the_isda_protection_reaches_the_maturity_when_the_curve_ends_before_it() {
+        // a discount curve with nodes that all lie before the maturity (extrapolated at its last
+        // slope) is the flat 2% curve, so the values must equal those on the flat curve
+        let today = d(2026, 11, 2);
+        let nodes = YieldCurve::discount_factors(vec![today, d(2027, 11, 2)], vec![1.0, (-0.02f64).exp()], act365())
+            .unwrap()
+            .with_extrapolation(true);
+        let h = HazardCurve::flat(today, act365(), 0.03).unwrap();
+        let swap = Cds::new(spec(0.01, ProtectionSide::Buyer)).unwrap();
+        let on_nodes = compute_cds_value(CdsEngine::Isda, &swap, &h, 0.4, &nodes, today).unwrap();
+        let on_flat = compute_cds_value(CdsEngine::Isda, &swap, &h, 0.4, &curve(0.02), today).unwrap();
+        // the 5-year protection leg of 1,000,000 at 3% x 0.6 is about 80,000; a missing last interval is far off
+        assert!(on_flat.default_leg_npv > 50_000.0);
+        assert!((on_nodes.default_leg_npv - on_flat.default_leg_npv).abs() < 1e-3 * on_flat.default_leg_npv.abs().max(1.0) * 1e-3);
+    }
 }
+

@@ -149,7 +149,7 @@ pub fn compute_credit_loss_distribution(obligors: &[Obligor], unit: f64, panels:
             }
         })
         .collect::<Result<_, _>>()?;
-    let states = units.iter().sum::<usize>() + 1;
+    let states = units.iter().fold(0usize, |a, &u| a.saturating_add(u)).saturating_add(1);
     if states > 1_000_000 {
         return invalid("the loss lattice has more than a million points: choose a larger unit");
     }
@@ -196,6 +196,9 @@ pub fn compute_distribution_risk(distribution: &CreditLossDistribution, confiden
     check_confidence(confidence_level)?;
     let alpha = confidence_level;
     let p = &distribution.probability;
+    if p.is_empty() {
+        return invalid("the loss distribution has no points");
+    }
     let mut cumulative = 0.0;
     let mut k_var = p.len() - 1;
     for (k, pk) in p.iter().enumerate() {
@@ -209,7 +212,7 @@ pub fn compute_distribution_risk(distribution: &CreditLossDistribution, confiden
     let above: f64 = (k_var + 1..p.len()).map(|k| distribution.loss(k) * p[k]).sum();
     let mass: f64 = (k_var..p.len()).map(|k| p[k]).sum();
     let at_or_above: f64 = (k_var..p.len()).map(|k| distribution.loss(k) * p[k]).sum();
-    Ok(DistributionRisk { confidence_level: alpha, var, es: (above + var * (cumulative - alpha)) / (1.0 - alpha), tail_mean_es: at_or_above / mass })
+    Ok(DistributionRisk { confidence_level: alpha, var, es: (above + var * (cumulative - alpha)) / (1.0 - alpha), tail_mean_es: if mass > 0.0 { at_or_above / mass } else { var } })
 }
 
 /// Portfolio losses of `scenarios` Monte Carlo scenarios.

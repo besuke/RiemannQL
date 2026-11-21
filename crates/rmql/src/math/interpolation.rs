@@ -37,9 +37,9 @@ impl<T: Operand> Linear<T> {
                 ),
             });
         }
-        if x.windows(2).any(|w| w[1] <= w[0]) {
+        if x.iter().any(|v| !v.is_finite()) || x.windows(2).any(|w| w[1] <= w[0]) {
             return Err(Error::InvalidInput {
-                reason: "unsorted x values".into(),
+                reason: "unsorted or non-finite x values".into(),
             });
         }
         let s = (1..x.len())
@@ -56,8 +56,8 @@ impl<T: Operand> Linear<T> {
         } else if x > self.x[n - 1] {
             n - 2
         } else {
-            // upper_bound over x[0..n-1] minus one
-            self.x[..n - 1].partition_point(|&v| v <= x) - 1
+            // upper_bound over x[0..n-1] minus one (a NaN `x` gives the first segment)
+            self.x[..n - 1].partition_point(|&v| v <= x).saturating_sub(1)
         }
     }
 
@@ -190,9 +190,9 @@ impl<T: Operand> MonotonicCubicSpline<T> {
                 ),
             });
         }
-        if x.windows(2).any(|w| w[1] <= w[0]) {
+        if x.iter().any(|v| !v.is_finite()) || x.windows(2).any(|w| w[1] <= w[0]) {
             return Err(Error::InvalidInput {
-                reason: "unsorted x values".into(),
+                reason: "unsorted or non-finite x values".into(),
             });
         }
         let dx: Vec<f64> = x.windows(2).map(|w| w[1] - w[0]).collect();
@@ -237,7 +237,7 @@ impl<T: Operand> MonotonicCubicSpline<T> {
         } else if x > self.x[n - 1] {
             n - 2
         } else {
-            self.x[..n - 1].partition_point(|&v| v <= x) - 1
+            self.x[..n - 1].partition_point(|&v| v <= x).saturating_sub(1)
         }
     }
 

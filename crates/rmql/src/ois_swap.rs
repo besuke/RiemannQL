@@ -409,8 +409,13 @@ pub fn compute_ois_swap_daily_rates(
     (0..n)
         .map(|i| {
             let (start, end) = (coupon.value_dates[i], coupon.value_dates[i + 1]);
-            let forward_rate = (forecast.discount(start)? / forecast.discount(end)? - 1.0) / coupon.day_fractions[i];
             let fixing = fixings.get(&start).copied();
+            // a day before the curve's reference date has a fixing and no forward (NaN)
+            let forward_rate = match (forecast.discount(start), forecast.discount(end)) {
+                (Ok(a), Ok(b)) => (a / b - 1.0) / coupon.day_fractions[i],
+                _ if start < forecast.reference_date() && fixing.is_some() => f64::NAN,
+                (Err(e), _) | (_, Err(e)) => return Err(e),
+            };
             let applied_rate = match fixing {
                 Some(f) if start <= evaluation_date => f,
                 _ => forward_rate,

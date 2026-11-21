@@ -99,6 +99,9 @@ where
     if accuracy <= 0.0 {
         return Err(Error::InvalidInput { reason: format!("accuracy ({accuracy}) must be positive") });
     }
+    if !(step > 0.0 && step.is_finite()) {
+        return Err(Error::InvalidInput { reason: format!("step ({step}) must be positive and finite") });
+    }
     let accuracy = accuracy.max(f64::EPSILON);
     let growth_factor = 1.6;
     let mut flipflop = -1;
@@ -365,6 +368,9 @@ where
 {
     if accuracy <= 0.0 {
         return Err(Error::InvalidInput { reason: format!("accuracy ({accuracy}) must be positive") });
+    }
+    if !(step > 0.0 && step.is_finite()) {
+        return Err(Error::InvalidInput { reason: format!("step ({step}) must be positive and finite") });
     }
     let accuracy = accuracy.max(f64::EPSILON);
     let growth_factor = 1.6;

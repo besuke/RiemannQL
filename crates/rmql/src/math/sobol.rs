@@ -92,7 +92,7 @@ impl SobolSequence {
     }
 
     /// The largest number of points one sequence gives.
-    pub const MAX_POINTS: u64 = 1 << 32;
+    pub const MAX_POINTS: u64 = (1 << 32) - 1;
 
     /// Moves to the next point and returns its integers; divide by 2^32 for the point in (0, 1).
     /// Panics after [`SobolSequence::MAX_POINTS`] points, where QuantLib fails too: callers check the count.
@@ -101,7 +101,12 @@ impl SobolSequence {
             self.first = false;
             return &self.integers;
         }
-        self.counter = self.counter.checked_add(1).expect("the Sobol sequence is exhausted");
+        // a counter of u32::MAX would need a 33rd direction number
+        self.counter = self
+            .counter
+            .checked_add(1)
+            .filter(|&c| c != u32::MAX)
+            .expect("the Sobol sequence is exhausted");
         let j = self.counter.trailing_ones() as usize;
         for (value, column) in self.integers.iter_mut().zip(&self.direction) {
             *value ^= column[j];

@@ -124,7 +124,9 @@ impl PortfolioConstraints {
         Ok(())
     }
     fn bounded(&self) -> bool {
-        self.lower.iter().chain(&self.upper).any(|v| v.is_finite())
+        // with the weights summing to a constant, the set is bounded when all the lower bounds are
+        // finite or all the upper bounds are
+        self.lower.iter().all(|v| v.is_finite()) || self.upper.iter().all(|v| v.is_finite())
     }
 }
 
@@ -226,8 +228,26 @@ fn target_return(m: &ReturnMoments, c: &PortfolioConstraints, target: f64) -> Re
 /// The largest return: fill the assets in decreasing order of mean return up to their upper bounds.
 fn maximum_return(m: &ReturnMoments, c: &PortfolioConstraints) -> Result<Vec<f64>, Error> {
     let n = m.mean.len();
-    if c.lower.iter().any(|v| !v.is_finite()) || c.upper.iter().any(|v| !v.is_finite()) {
-        return invalid("the maximum return needs finite lower and upper bounds on every weight");
+    let all_lower = c.lower.iter().all(|v| v.is_finite());
+    let all_upper = c.upper.iter().all(|v| v.is_finite());
+    if !all_lower && !all_upper {
+        return invalid("the maximum return needs finite lower bounds on every weight, or finite upper bounds on every weight");
+    }
+    if !all_lower {
+        // start from the upper bounds and take the excess from the assets with the lowest means
+        let mut w = c.upper.clone();
+        let mut excess = w.iter().sum::<f64>() - c.weight_sum;
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by(|&i, &j| m.mean[i].total_cmp(&m.mean[j]).then(j.cmp(&i)));
+        for i in order {
+            if excess <= 0.0 {
+                break;
+            }
+            let cut = excess.min(c.upper[i] - c.lower[i]);
+            w[i] -= cut;
+            excess -= cut;
+        }
+        return Ok(w);
     }
     let mut w = c.lower.clone();
     let mut left = c.weight_sum - w.iter().sum::<f64>();
@@ -593,7 +613,12 @@ fn historical_es<T: Operand>(w: &[T], returns: &ReturnMatrix, alpha: f64) -> T {
     sum / k
 }
 
+/// NaN when the inputs cannot give one: no periods, a number of weights that differs from the assets,
+/// or a confidence level outside (0, 1).
 pub fn compute_historical_es(returns: &ReturnMatrix, weights: &[f64], alpha: f64) -> f64 {
+    if returns.periods() == 0 || weights.is_empty() || weights.len() != returns.row(0).len() || !(alpha > 0.0 && alpha < 1.0) {
+        return f64::NAN;
+    }
     historical_es(weights, returns, alpha)
 }
 

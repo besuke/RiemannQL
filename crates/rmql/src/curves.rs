@@ -514,7 +514,7 @@ impl<T: Operand> YieldCurve<T> {
 
     /// QuantLib `TermStructure::checkRange(t, extrapolate)`.
     fn check_range(&self, t: f64, extrapolate: bool) -> Result<(), Error> {
-        if t < 0.0 {
+        if t.is_nan() || t < 0.0 {
             return Err(Error::InvalidInput {
                 reason: format!("negative time ({t}) given"),
             });

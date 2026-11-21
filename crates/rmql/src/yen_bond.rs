@@ -206,7 +206,8 @@ fn compound_values(
     let alpha = r_pow(base, -ratio);
     let coupon = coupon_rate / coupon_frequency;
 
-    let (price, p_alpha, p_alpha2) = if compound_yield == 0.0 {
+    // `1 - alpha` is the divisor of the series: near 0 it would give 0 / 0
+    let (price, p_alpha, p_alpha2) = if compound_yield == 0.0 || (1.0 - alpha).abs() < 1e-12 {
         let price = redemption + coupon_rate * t;
         if coupon_frequency == 2.0 && compound_frequency == 2.0 {
             let d1 = -(coupon_rate * t * (2.0 * t + 1.0) / 400.0 + redemption * t / 100.0);

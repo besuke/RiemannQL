@@ -174,7 +174,8 @@ impl LmmSpec {
         match &self.volatility_grid {
             None => self.volatilities[i],
             Some(grid) => {
-                let k = self.times.iter().filter(|&&t| t < u).count();
+                // after the last time the last column holds
+                let k = self.times.iter().filter(|&&t| t < u).count().min(self.count());
                 grid[i * (self.count() + 1) + k]
             }
         }
@@ -500,6 +501,20 @@ fn swap_rate_and_annuity(spec: &LmmSpec, a: usize, b: usize, forwards: &[f64]) -
     ((1.0 - discount) / annuity, annuity)
 }
 
+/// The paths must have the shape the spec gives: `n + 1` dates of `n` forwards and numeraires, and
+/// `n` observed rates when `observed` is needed.
+fn check_paths(spec: &LmmSpec, paths: &LmmPaths, observed: bool) -> Result<(), Error> {
+    let n = spec.count();
+    let shaped = paths.state.len() == paths.numeraire.len()
+        && paths.state.iter().all(|s| s.len() == n + 1 && s.iter().all(|row| row.len() == n))
+        && paths.numeraire.iter().all(|v| v.len() == n + 1)
+        && (!observed || (paths.observed.len() == paths.state.len() && paths.observed.iter().all(|v| v.len() == n)));
+    if !shaped || paths.state.is_empty() {
+        return invalid(format!("the paths do not match the spec: each needs {} dates of {n} forwards", n + 1));
+    }
+    Ok(())
+}
+
 /// A payer swaption exercised at `T_a` into the swap paying `strike` and receiving the forwards from
 /// `T_a` to `T_b`, per unit notional, on the paths.
 pub fn compute_lmm_swaption_value(spec: &LmmSpec, paths: &LmmPaths, a: usize, b: usize, strike: f64) -> Result<LmmEstimate, Error> {
@@ -508,6 +523,7 @@ pub fn compute_lmm_swaption_value(spec: &LmmSpec, paths: &LmmPaths, a: usize, b:
     if !(a < b && b <= n) {
         return invalid(format!("the swap must run from T_a to T_b with a < b <= {n}"));
     }
+    check_paths(spec, paths, false)?;
     if spec.times[a] < 0.0 {
         return invalid(format!("the exercise T_a = {} is before today; give an exercise time with compute_lmm_swaption_value_at", spec.times[a]));
     }
@@ -539,6 +555,7 @@ pub fn compute_lmm_swaption_value_at(spec: &LmmSpec, paths: &LmmPaths, a: usize,
     if !(a < b && b <= n) {
         return invalid(format!("the swap must run from T_a to T_b with a < b <= {n}"));
     }
+    check_paths(spec, paths, true)?;
     if a < spec.first_open_period() {
         return invalid(format!("the swap starts in a period that ended before today ({a})"));
     }
@@ -573,6 +590,7 @@ pub fn compute_lmm_caplet_value(spec: &LmmSpec, paths: &LmmPaths, i: usize, stri
     if i < spec.first_open_period() {
         return invalid(format!("the period of forward {i} ended before today: its caplet is fixed and paid"));
     }
+    check_paths(spec, paths, false)?;
     let tau = spec.accrual(i);
     let values: Vec<f64> = paths
         .state

@@ -602,6 +602,11 @@ struct Grid<'c> {
     curve: &'c YieldCurve,
 }
 
+/// Times that are finite, positive and strictly increasing (false for a NaN).
+fn times_increase(times: &[f64]) -> bool {
+    !times.is_empty() && times[0] > 0.0 && times.iter().all(|t| t.is_finite()) && times.windows(2).all(|w| w[1] > w[0])
+}
+
 /// Linear in the state, flat outside the grid (R's `approx` with `rule = 2`).
 fn interpolate(states: &[f64], values: &[f64], x: f64) -> f64 {
     let n = states.len();
@@ -611,7 +616,10 @@ fn interpolate(states: &[f64], values: &[f64], x: f64) -> f64 {
     if x >= states[n - 1] {
         return values[n - 1];
     }
-    let j = states.partition_point(|&s| s <= x) - 1;
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let j = states.partition_point(|&s| s <= x).saturating_sub(1);
     let w = (x - states[j]) / (states[j + 1] - states[j]);
     values[j] + w * (values[j + 1] - values[j])
 }
@@ -739,7 +747,7 @@ fn callable_induction(
     if flows.len() < 2 {
         return invalid("a callable bond needs at least 2 payments".into());
     }
-    if flows.windows(2).any(|w| w[1].time <= w[0].time) || flows[0].time <= 0.0 {
+    if !times_increase(&flows.iter().map(|f| f.time).collect::<Vec<_>>()) {
         return invalid("payment times must be positive and increasing".into());
     }
     let grid = Grid::new(mean_reversion, volatility, curve, settings)?;
@@ -815,7 +823,7 @@ pub fn compute_bermudan_swaption(
     settings: &GridSettings,
 ) -> Result<f64, Error> {
     let amounts = flows.amounts()?;
-    if exercise_times.is_empty() || exercise_times.windows(2).any(|w| w[1] <= w[0]) || exercise_times[0] <= 0.0 {
+    if !times_increase(exercise_times) {
         return invalid("exercise times must be positive and increasing".into());
     }
     let grid = Grid::new(mean_reversion, volatility, curve, settings)?;
