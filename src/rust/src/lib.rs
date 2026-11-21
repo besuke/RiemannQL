@@ -75,6 +75,55 @@ fn flag(value: i32) -> Core<bool> {
         }),
     }
 }
+/// A count from R: NA and negative values are failures here, never zero or a huge number.
+fn size(value: i32, name: &str) -> Core<usize> {
+    usize::try_from(value).map_err(|_| rmql::Error::InvalidInput {
+        reason: format!("`{name}` must be a non-negative whole number, not {}", if value == i32::MIN { "NA".to_string() } else { value.to_string() }),
+    })
+}
+/// As [`size`], and at least 1.
+fn positive_size(value: i32, name: &str) -> Core<usize> {
+    match size(value, name)? {
+        0 => Err(rmql::Error::InvalidInput { reason: format!("`{name}` must be at least 1") }),
+        n => Ok(n),
+    }
+}
+/// A natural number for a `u32` field (a frequency, a number of days or digits).
+fn natural(value: i32, name: &str) -> Core<u32> {
+    u32::try_from(value).map_err(|_| rmql::Error::InvalidInput {
+        reason: format!("`{name}` must be a non-negative whole number, not {}", if value == i32::MIN { "NA".to_string() } else { value.to_string() }),
+    })
+}
+/// The largest count taken from a real number (paths, scenarios, points): 2^32.
+const MAX_REAL_COUNT: f64 = 4_294_967_296.0;
+/// A count given as a real number: finite, not negative and at most 2^32 (the fraction is dropped).
+fn size_real(value: f64, name: &str) -> Core<usize> {
+    if !(value.is_finite() && (0.0..=MAX_REAL_COUNT).contains(&value)) {
+        return Err(rmql::Error::InvalidInput {
+            reason: format!("`{name}` must be a finite number from 0 to {MAX_REAL_COUNT}, not {value}"),
+        });
+    }
+    Ok(value as usize)
+}
+/// The number of threads: 0 (the default) to 1024.
+fn thread_count(value: i32) -> Core<usize> {
+    match size(value, "threads")? {
+        n if n <= 1024 => Ok(n),
+        n => Err(rmql::Error::InvalidInput { reason: format!("`threads` must be at most 1024, not {n}") }),
+    }
+}
+/// The vectors of one call must have the same length.
+fn same_length(parts: &[(&str, usize)]) -> Core<()> {
+    match parts.split_first() {
+        Some(((_, n), rest)) if rest.iter().any(|(_, m)| m != n) => Err(rmql::Error::InvalidInput {
+            reason: format!(
+                "the arguments must have the same length ({})",
+                parts.iter().map(|(name, len)| format!("{name}: {len}")).collect::<Vec<_>>().join(", ")
+            ),
+        }),
+        _ => Ok(()),
+    }
+}
 fn na_real() -> f64 {
     <f64 as CanBeNA>::na()
 }
@@ -104,7 +153,7 @@ fn yield_convention(day_count: &str, compounding: &str, frequency: i32) -> Core<
     Ok(YieldConvention {
         day_count: names::parse_day_count(day_count)?,
         compounding: names::parse_compounding(compounding)?,
-        frequency: frequency as u32,
+        frequency: natural(frequency, "frequency")?,
     })
 }
 // ---- bonds ----------------------------------------------------------------------------------
@@ -133,7 +182,7 @@ fn create_fixed_rate_bond(
     let build = || -> Core<FixedRateBond> {
         let notionals = if notionals.is_empty() { vec![face_amount] } else { notionals };
         FixedRateBond::with_schedules(FixedRateBondSpec {
-            settlement_days: settlement_days as u32,
+            settlement_days: natural(settlement_days, "settlement_days")?,
             face_amount,
             schedule: ScheduleSpec {
                 effective_date: date(effective_date)?,
@@ -299,7 +348,7 @@ fn compute_yield_from_price(
         let kind = names::parse_price_type(price_type)?;
         let solver = YieldSolver {
             accuracy,
-            max_iterations: max_iterations as usize,
+            max_iterations: size(max_iterations, "max_iterations")?,
             guess,
         };
         let rows = price
@@ -358,9 +407,9 @@ fn create_ois_swap(
             fixed_rate,
             fixed_day_count: if fixed_day_count.is_empty() { None } else { Some(names::parse_day_count(fixed_day_count)?) },
             spread,
-            fixed_frequency: fixed_frequency as u32,
-            overnight_frequency: overnight_frequency as u32,
-            payment_lag: payment_lag as u32,
+            fixed_frequency: natural(fixed_frequency, "fixed_frequency")?,
+            overnight_frequency: natural(overnight_frequency, "overnight_frequency")?,
+            payment_lag: natural(payment_lag, "payment_lag")?,
         })
     };
     match build() {
@@ -551,7 +600,7 @@ fn compute_bond_value_with_zero_spread(
         let mut errors = Vec::with_capacity(n);
         for (&s, &d) in spread.iter().zip(&evaluation_date) {
             let value = date(d).and_then(|d| {
-                bond.value_with_zero_spread(&curve.curve, s, compounding, frequency as u32, d)
+                bond.value_with_zero_spread(&curve.curve, s, compounding, natural(frequency, "frequency")?, d)
             });
             match value {
                 Ok(v) => {
@@ -605,10 +654,10 @@ fn compute_z_spread_from_price(
                     p,
                     kind,
                     compounding,
-                    frequency as u32,
+                    natural(frequency, "frequency")?,
                     date(s)?,
                     accuracy,
-                    max_evaluations as usize,
+                    size(max_evaluations, "max_evaluations")?,
                     guess,
                 )
             })
@@ -655,11 +704,11 @@ fn compute_bond_value_on_curve(
 }
 // ---- Japanese bond calculations --------------------------------------------------------------
 /// NA digits stand for no truncation.
-fn optional_digits(digits: i32) -> Option<u32> {
+fn optional_digits(digits: i32) -> Core<Option<u32>> {
     if digits.is_na() {
-        None
+        Ok(None)
     } else {
-        Some(digits as u32)
+        natural(digits, "digits").map(Some)
     }
 }
 #[extendr]
@@ -680,13 +729,13 @@ fn compute_price_from_simple_rate(
     digits: i32,
 ) -> List {
     let rows = (0..t.len())
-        .map(|i| {
+        .map(|i| -> Core<f64> {
             yen_bond::compute_price_from_simple_rate(
                 t[i],
                 coupon_rate[i],
                 simple_rate[i],
                 redemption[i],
-                optional_digits(digits),
+                optional_digits(digits)?,
             )
         })
         .collect();
@@ -708,18 +757,18 @@ fn compute_simple_rate_from_price(
                 coupon_rate[i],
                 price[i],
                 redemption[i],
-                digits as u32,
-                max_iterations as usize,
+                natural(digits, "digits")?,
+                size(max_iterations, "max_iterations")?,
             )
         })
         .collect();
     value_list(rows)
 }
-fn frequencies(coupon: i32, compound: i32) -> yen_bond::CompoundFrequencies {
-    yen_bond::CompoundFrequencies {
-        coupon: coupon as u32,
-        compound: compound as u32,
-    }
+fn frequencies(coupon: i32, compound: i32) -> Core<yen_bond::CompoundFrequencies> {
+    Ok(yen_bond::CompoundFrequencies {
+        coupon: natural(coupon, "coupon")?,
+        compound: natural(compound, "compound")?,
+    })
 }
 #[extendr]
 #[allow(clippy::too_many_arguments)]
@@ -733,14 +782,14 @@ fn compute_price_from_compound_yield(
     digits: i32,
 ) -> List {
     let rows = (0..t.len())
-        .map(|i| {
+        .map(|i| -> Core<f64> {
             yen_bond::compute_price_from_compound_yield(
                 t[i],
                 coupon_rate[i],
                 compound_yield[i],
                 redemption[i],
-                frequencies(coupon_frequency, compound_frequency),
-                optional_digits(digits),
+                frequencies(coupon_frequency, compound_frequency)?,
+                optional_digits(digits)?,
             )
         })
         .collect();
@@ -759,15 +808,15 @@ fn compute_compound_yield_from_price(
     max_iterations: i32,
 ) -> List {
     let rows = (0..t.len())
-        .map(|i| {
+        .map(|i| -> Core<f64> {
             yen_bond::compute_compound_yield_from_price(
                 t[i],
                 coupon_rate[i],
                 price[i],
                 redemption[i],
-                frequencies(coupon_frequency, compound_frequency),
-                digits as u32,
-                max_iterations as usize,
+                frequencies(coupon_frequency, compound_frequency)?,
+                natural(digits, "digits")?,
+                size(max_iterations, "max_iterations")?,
             )
         })
         .collect();
@@ -829,6 +878,10 @@ fn compute_risk_from_compound_yield(
     coupon_frequency: i32,
     compound_frequency: i32,
 ) -> List {
+    let frequencies = match frequencies(coupon_frequency, compound_frequency) {
+        Ok(f) => f,
+        Err(e) => return failure(e),
+    };
     risk_list(
         (0..t.len())
             .map(|i| {
@@ -837,7 +890,7 @@ fn compute_risk_from_compound_yield(
                     coupon_rate[i],
                     compound_yield[i],
                     redemption[i],
-                    frequencies(coupon_frequency, compound_frequency),
+                    frequencies,
                     accrued_interest[i],
                 )
             })
@@ -862,6 +915,13 @@ fn bootstrap_ois_curve(
     accuracy: f64,
 ) -> List {
     let build = || -> Core<OisCurve> {
+        same_length(&[
+            ("tenor", tenor.len()),
+            ("rate", rate.len()),
+            ("settlement_days", settlement_days.len()),
+            ("payment_frequency", payment_frequency.len()),
+            ("payment_lag", payment_lag.len()),
+        ])?;
         let instruments = (0..tenor.len())
             .map(|i| {
                 Ok(if tenor[i] == "ON" {
@@ -870,9 +930,9 @@ fn bootstrap_ois_curve(
                     OisCurveInstrument::Ois {
                         tenor: names::parse_period(&tenor[i])?,
                         rate: rate[i],
-                        settlement_days: settlement_days[i] as u32,
-                        payment_frequency: payment_frequency[i] as u32,
-                        payment_lag: payment_lag[i] as u32,
+                        settlement_days: natural(settlement_days[i], "settlement_days")?,
+                        payment_frequency: natural(payment_frequency[i], "payment_frequency")?,
+                        payment_lag: natural(payment_lag[i], "payment_lag")?,
                     }
                 })
             })
@@ -920,7 +980,7 @@ fn compute_zero_rate(
             .map(|&d| {
                 Ok(curve
                     .curve
-                    .zero_rate(date(d)?, &dc, comp, frequency as u32)?
+                    .zero_rate(date(d)?, &dc, comp, natural(frequency, "frequency")?)?
                     .rate)
             })
             .collect();
@@ -946,7 +1006,7 @@ fn compute_forward_rate(
             .map(|(&a, &b)| {
                 Ok(curve
                     .curve
-                    .forward_rate(date(a)?, date(b)?, &dc, comp, frequency as u32)?
+                    .forward_rate(date(a)?, date(b)?, &dc, comp, natural(frequency, "frequency")?)?
                     .rate)
             })
             .collect();
@@ -991,7 +1051,7 @@ fn given_curve(build: impl FnOnce() -> Core<YieldCurve>, index: &str) -> List {
 fn create_flat_curve(reference_date: i32, rate: f64, day_count: &str, compounding: &str, frequency: i32, index: &str) -> List {
     given_curve(
         || {
-            let rate = InterestRate::new(rate, names::parse_day_count(day_count)?, names::parse_compounding(compounding)?, frequency.max(0) as u32)?;
+            let rate = InterestRate::new(rate, names::parse_day_count(day_count)?, names::parse_compounding(compounding)?, natural(frequency, "frequency")?)?;
             Ok(YieldCurve::flat(date(reference_date)?, rate))
         },
         index,
@@ -1003,7 +1063,7 @@ fn create_zero_curve(dates: Vec<i32>, rates: Vec<f64>, day_count: &str, compound
     given_curve(
         || {
             let dates = dates.iter().map(|&d| date(d)).collect::<Core<Vec<_>>>()?;
-            YieldCurve::zero(dates, rates, names::parse_day_count(day_count)?, names::parse_compounding(compounding)?, frequency.max(0) as u32)
+            YieldCurve::zero(dates, rates, names::parse_day_count(day_count)?, names::parse_compounding(compounding)?, natural(frequency, "frequency")?)
         },
         index,
     )
@@ -1028,7 +1088,7 @@ fn create_discount_curve(dates: Vec<i32>, discounts: Vec<f64>, day_count: &str, 
 #[extendr]
 fn create_zero_spreaded_curve(curve: ExternalPtr<OisCurve>, spread: Vec<f64>, compounding: &str, frequency: i32, dates: Vec<i32>) -> List {
     let run = || -> Core<OisCurve> {
-        let (compounding, frequency) = (names::parse_compounding(compounding)?, frequency.max(0) as u32);
+        let (compounding, frequency) = (names::parse_compounding(compounding)?, natural(frequency, "frequency")?);
         let spreaded = if dates.is_empty() {
             match spread.as_slice() {
                 [s] => YieldCurve::zero_spreaded(curve.curve.clone(), *s, compounding, frequency)?,
@@ -1208,8 +1268,8 @@ fn compute_ois_asset_swap(
             &curve.spec.index,
             &OisAssetSwapTerms {
                 clean_price: clean_price[i],
-                payment_frequency: payment_frequency as u32,
-                payment_lag: payment_lag.max(0) as u32,
+                payment_frequency: natural(payment_frequency, "payment_frequency")?,
+                payment_lag: natural(payment_lag, "payment_lag")?,
                 spread: spread[i],
             },
             date(evaluation_date)?,
@@ -1260,8 +1320,8 @@ fn compute_asset_swap_quote_sensitivity(
             &curve,
             &OisAssetSwapTerms {
                 clean_price,
-                payment_frequency: payment_frequency as u32,
-                payment_lag: payment_lag.max(0) as u32,
+                payment_frequency: natural(payment_frequency, "payment_frequency")?,
+                payment_lag: natural(payment_lag, "payment_lag")?,
                 spread: 0.0,
             },
             date(evaluation_date)?,
@@ -1292,20 +1352,22 @@ fn compute_yen_asset_swap(
     evaluation_date: i32,
 ) -> List {
     let (columns, error) = table(clean_price.len(), |i| {
-        let terms = |frequency: i32, lag: i32| OisAssetSwapTerms {
-            clean_price: clean_price[i],
-            payment_frequency: frequency as u32,
-            payment_lag: lag.max(0) as u32,
-            spread: 0.0,
+        let terms = |frequency: i32, lag: i32| -> Core<OisAssetSwapTerms> {
+            Ok(OisAssetSwapTerms {
+                clean_price: clean_price[i],
+                payment_frequency: natural(frequency, "frequency")?,
+                payment_lag: natural(lag, "lag")?,
+                spread: 0.0,
+            })
         };
         let v = asset_swap::compute_yen_asset_swap(
             &bond,
             &foreign_curve.curve,
             &foreign_curve.spec.index,
-            &terms(foreign_payment_frequency, foreign_payment_lag),
+            &terms(foreign_payment_frequency, foreign_payment_lag)?,
             &yen_curve.curve,
             &yen_curve.spec.index,
-            &terms(yen_payment_frequency, yen_payment_lag),
+            &terms(yen_payment_frequency, yen_payment_lag)?,
             &YenBasisTerms { fx_spot: fx_spot[i], basis: basis[i], spread: spread[i] },
             date(evaluation_date)?,
         )?;
@@ -1351,20 +1413,22 @@ fn compute_yen_asset_swap_on_basis_curve(
     evaluation_date: i32,
 ) -> List {
     let (columns, error) = table(clean_price.len(), |i| {
-        let terms = |frequency: i32, lag: i32| OisAssetSwapTerms {
-            clean_price: clean_price[i],
-            payment_frequency: frequency as u32,
-            payment_lag: lag.max(0) as u32,
-            spread: 0.0,
+        let terms = |frequency: i32, lag: i32| -> Core<OisAssetSwapTerms> {
+            Ok(OisAssetSwapTerms {
+                clean_price: clean_price[i],
+                payment_frequency: natural(frequency, "frequency")?,
+                payment_lag: natural(lag, "lag")?,
+                spread: 0.0,
+            })
         };
         let v = asset_swap::compute_yen_asset_swap_on_basis_curve(
             &bond,
             &foreign_curve.curve,
             &foreign_curve.spec.index,
-            &terms(foreign_payment_frequency, foreign_payment_lag),
+            &terms(foreign_payment_frequency, foreign_payment_lag)?,
             &yen_curve.curve,
             &yen_curve.spec.index,
-            &terms(yen_payment_frequency, yen_payment_lag),
+            &terms(yen_payment_frequency, yen_payment_lag)?,
             &basis_curve.curve,
             fx_spot[i],
             spread[i],
@@ -1406,19 +1470,28 @@ fn bootstrap_xccy_curve(
     accuracy: f64,
 ) -> List {
     let build = || -> Core<XccyCurve> {
+        same_length(&[
+            ("kind", kind.len()),
+            ("tenor", tenor.len()),
+            ("quote", quote.len()),
+            ("fixing_days", fixing_days.len()),
+            ("payment_frequency", payment_frequency.len()),
+            ("basis_on_base_leg", basis_on_base_leg.len()),
+            ("resetting", resetting.len()),
+        ])?;
         let today = date(evaluation_date)?;
         let instruments = (0..kind.len())
             .map(|i| {
                 let tenor = names::parse_period(&tenor[i])?;
-                let fixing_days = fixing_days[i].max(0) as u32;
+                let fixing_days = natural(fixing_days[i], "fixing_days[i]")?;
                 Ok(match kind[i].as_str() {
                     "fx_swap" => XccyInstrument::FxSwap { tenor, fixing_days, forward_points: quote[i] },
                     "basis_swap" => XccyInstrument::BasisSwap {
                         tenor,
                         fixing_days,
-                        payment_frequency: payment_frequency[i].max(0) as u32,
+                        payment_frequency: natural(payment_frequency[i], "payment_frequency[i]")?,
                         basis: quote[i],
-                        basis_on_base_leg: basis_on_base_leg[i] != 0,
+                        basis_on_base_leg: flag(basis_on_base_leg[i])?,
                         resetting: match resetting[i].as_str() {
                             "none" => ResettingLeg::None,
                             "base" => ResettingLeg::Base,
@@ -1541,7 +1614,7 @@ fn compute_ctd_time_value(
             &options,
             &spreads,
             &correlation,
-            paths.max(0) as usize,
+            size(paths, "paths")?,
             seed as u64,
         )?;
         Ok(list!(
@@ -1593,16 +1666,16 @@ fn compute_future_basis(
 }
 // ---- Hull-White and SABR ---------------------------------------------------------------------
 /// `spacing` above 0 selects the trapezoid rule; otherwise `nodes` of Gauss-Hermite.
-fn grid_settings(points: i32, limit: f64, nodes: i32, spacing: f64) -> GridSettings {
-    GridSettings {
-        points: points.max(0) as usize,
+fn grid_settings(points: i32, limit: f64, nodes: i32, spacing: f64) -> Core<GridSettings> {
+    Ok(GridSettings {
+        points: size(points, "points")?,
         limit,
         quadrature: if spacing > 0.0 {
             Quadrature::Trapezoid(spacing)
         } else {
-            Quadrature::GaussHermite(nodes.max(0) as usize)
+            Quadrature::GaussHermite(size(nodes, "nodes")?)
         },
-    }
+    })
 }
 #[extendr]
 #[allow(clippy::too_many_arguments)]
@@ -1666,7 +1739,10 @@ fn compute_hull_white_bermudan_swaption_value(
     spacing: f64,
 ) -> List {
     let flows = SwaptionFlows { payer, maturity, value_time: maturity, payment_times, coupons, nominal };
-    let settings = grid_settings(points, limit, nodes, spacing);
+    let settings = match grid_settings(points, limit, nodes, spacing) {
+        Ok(settings) => settings,
+        Err(e) => return failure(e),
+    };
     outcome(
         hull_white::compute_bermudan_swaption(&flows, &exercise_times, mean_reversion, volatility, &curve.curve, &settings)
             .map(|value| list!(value = value)),
@@ -1696,7 +1772,10 @@ fn compute_hull_white_callable_bond_value(
             call_price: if call_price[i].is_nan() { None } else { Some(call_price[i]) },
         })
         .collect();
-    let settings = grid_settings(points, limit, nodes, spacing);
+    let settings = match grid_settings(points, limit, nodes, spacing) {
+        Ok(settings) => settings,
+        Err(e) => return failure(e),
+    };
     outcome(
         hull_white::compute_callable_bond(&flows, mean_reversion, volatility, &curve.curve, &settings).map(|v| {
             list!(bullet = v.bullet, callable = v.callable, issuer_call_value = v.issuer_call_value)
@@ -1727,7 +1806,10 @@ fn compute_hull_white_callable_bond_decisions(
             call_price: if call_price[i].is_nan() { None } else { Some(call_price[i]) },
         })
         .collect();
-    let settings = grid_settings(points, limit, nodes, spacing);
+    let settings = match grid_settings(points, limit, nodes, spacing) {
+        Ok(settings) => settings,
+        Err(e) => return failure(e),
+    };
     outcome(
         hull_white::compute_callable_bond_decisions(&flows, mean_reversion, volatility, &curve.curve, &settings).map(|r| {
             // one row per call date and state, in increasing time and state
@@ -1814,6 +1896,29 @@ fn calibrate_hull_white(
     max_iterations: i32,
 ) -> List {
     let run = || -> Core<List> {
+        same_length(&[
+            ("option_type", option_type.len()),
+            ("strike", strike.len()),
+            ("option_maturity", option_maturity.len()),
+            ("bond_maturity", bond_maturity.len()),
+            ("option_price", option_price.len()),
+            ("option_weight", option_weight.len()),
+        ])?;
+        same_length(&[
+            ("payer", payer.len()),
+            ("swaption_maturity", swaption_maturity.len()),
+            ("flow_counts", flow_counts.len()),
+            ("nominal", nominal.len()),
+            ("swaption_price", swaption_price.len()),
+            ("swaption_weight", swaption_weight.len()),
+        ])?;
+        same_length(&[("payment_times", payment_times.len()), ("coupons", coupons.len())])?;
+        let flows = flow_counts.iter().try_fold(0usize, |a, &c| size(c, "flow_counts").map(|c| a.saturating_add(c)))?;
+        if flows != payment_times.len() {
+            return Err(rmql::Error::InvalidInput {
+                reason: format!("`flow_counts` add up to {flows}, but there are {} payment times", payment_times.len()),
+            });
+        }
         let mut quotes = Vec::with_capacity(strike.len() + payer.len());
         for i in 0..strike.len() {
             quotes.push(CalibrationQuote {
@@ -1829,10 +1934,10 @@ fn calibrate_hull_white(
         }
         let mut start = 0;
         for i in 0..payer.len() {
-            let end = start + flow_counts[i] as usize;
+            let end = start + size(flow_counts[i], "flow_counts")?;
             quotes.push(CalibrationQuote {
                 instrument: CalibrationInstrument::Swaption(SwaptionFlows {
-                    payer: payer[i] != 0,
+                    payer: flag(payer[i])?,
                     maturity: swaption_maturity[i],
                     value_time: swaption_maturity[i],
                     payment_times: payment_times[start..end].to_vec(),
@@ -1848,7 +1953,7 @@ fn calibrate_hull_white(
             initial_mean_reversion,
             initial_volatility,
             fix_mean_reversion,
-            max_iterations: max_iterations.max(0) as usize,
+            max_iterations: size(max_iterations, "max_iterations")?,
         };
         let c = hull_white::calibrate_hull_white(&quotes, &curve.curve, &settings)?;
         Ok(list!(
@@ -2020,7 +2125,7 @@ fn bootstrap_hazard_curve(
         };
         let spec = CdsCurveSpec {
             evaluation_date: date(evaluation_date)?,
-            settlement_days: settlement_days.max(0) as u32,
+            settlement_days: natural(settlement_days, "settlement_days")?,
             calendar: HolidayCalendar::from(names::parse_calendar(calendar)?),
             tenor: names::parse_period(tenor)?,
             payment_convention: names::parse_business_day_convention(payment_convention)?,
@@ -2191,10 +2296,10 @@ fn compute_prdc_three_factor_value(
                 other => return Err(rmql::Error::InvalidInput { reason: format!("unknown target coupon {other:?}: use \"capped\" or \"full\"") }),
             };
             let rule = prdc::TargetRedemption { target, coupon, make_whole };
-            let knock = prdc::KnockOut { level: knock_out_level, dates: knock_out_dates.iter().map(|&k| k.max(0) as usize).collect() };
+            let knock = prdc::KnockOut { level: knock_out_level, dates: knock_out_dates.iter().map(|&k| size(k, "knock_out_dates")).collect::<Core<Vec<usize>>>()? };
             let (rule, knock) = ((target.is_finite() || make_whole).then_some(&rule), knock_out_level.is_finite().then_some(&knock));
-            let r = prdc::compute_path_dependent_prdc(&terms, &model, rule, knock, paths as usize, steps_per_year.max(0) as usize, seed as u64)?;
-            let ps = prdc::compute_path_dependent_prdc_sensitivity(&terms, &model, rule, knock, paths as usize, steps_per_year.max(0) as usize, seed as u64, bump)?;
+            let r = prdc::compute_path_dependent_prdc(&terms, &model, rule, knock, size(paths, "paths")?, size(steps_per_year, "steps_per_year")?, seed as u64)?;
+            let ps = prdc::compute_path_dependent_prdc_sensitivity(&terms, &model, rule, knock, size(paths, "paths")?, size(steps_per_year, "steps_per_year")?, seed as u64, bump)?;
             let scalars = [ps.fx_delta, ps.fx_vega, ps.domestic_mean_reversion, ps.domestic_volatility, ps.foreign_mean_reversion, ps.foreign_volatility, ps.correlation[0], ps.correlation[1], ps.correlation[2]];
             let (mut path_curve, mut path_date, mut path_time, mut path_d, mut path_se, mut path_changed) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
             for c in &ps.curves {
@@ -2238,16 +2343,16 @@ fn compute_prdc_three_factor_value(
             if paths <= 0 {
                 return Err(rmql::Error::InvalidInput { reason: "a callable note needs paths".into() });
             }
-            let dates: Vec<usize> = call_dates.iter().map(|&k| k.max(0) as usize).collect();
-            let r = prdc::compute_callable_prdc_three_factor(&terms, &model, &dates, call_price, paths as usize, training_paths.max(0) as usize, steps_per_year.max(0) as usize, seed as u64, training_seed as u64)?;
+            let dates = call_dates.iter().map(|&k| size(k, "call_dates")).collect::<Core<Vec<usize>>>()?;
+            let r = prdc::compute_callable_prdc_three_factor(&terms, &model, &dates, call_price, size(paths, "paths")?, size(training_paths, "training_paths")?, size(steps_per_year, "steps_per_year")?, seed as u64, training_seed as u64)?;
             let cs = prdc::compute_callable_prdc_three_factor_sensitivity(
                 &terms,
                 &model,
                 &dates,
                 call_price,
-                paths as usize,
-                training_paths.max(0) as usize,
-                steps_per_year.max(0) as usize,
+                size(paths, "paths")?,
+                size(training_paths, "training_paths")?,
+                size(steps_per_year, "steps_per_year")?,
                 seed as u64,
                 training_seed as u64,
                 bump,
@@ -2289,7 +2394,7 @@ fn compute_prdc_three_factor_value(
             ));
         }
         let (value, standard_error) = if paths > 0 {
-            prdc::compute_prdc_three_factor_monte_carlo(&terms, &model, paths as usize, steps_per_year.max(0) as usize, seed as u64)?
+            prdc::compute_prdc_three_factor_monte_carlo(&terms, &model, size(paths, "paths")?, size(steps_per_year, "steps_per_year")?, seed as u64)?
         } else {
             (analytic, 0.0)
         };
@@ -2587,14 +2692,17 @@ fn compute_prdc_value(
         cap,
     };
     let result = if paths > 0.0 {
-        prdc::compute_prdc_monte_carlo(
-            &terms,
-            spot,
-            volatility,
-            &domestic_curve.curve,
-            &foreign_curve.curve,
-            &PrdcMonteCarlo { paths: paths as u64, seed: seed as u64, antithetic, threads: threads.max(0) as usize },
-        )
+        size_real(paths, "paths").and_then(|n| {
+            let threads = thread_count(threads)?;
+            prdc::compute_prdc_monte_carlo(
+                &terms,
+                spot,
+                volatility,
+                &domestic_curve.curve,
+                &foreign_curve.curve,
+                &PrdcMonteCarlo { paths: n as u64, seed: seed as u64, antithetic, threads },
+            )
+        })
     } else {
         prdc::compute_prdc_analytic(&terms, spot, volatility, &domestic_curve.curve, &foreign_curve.curve)
     };
@@ -2700,7 +2808,7 @@ fn compute_binomial_option_value(
             names::parse_option_type(&option_type[i])?,
             names::parse_exercise(&exercise[i])?,
             &option_inputs([spot[i], strike[i], rate[i], dividend_yield[i], volatility[i], time[i]]),
-            steps[i].max(0) as usize,
+            size(steps[i], "steps[i]")?,
         )
     })
 }
@@ -2788,7 +2896,7 @@ fn compute_implied_volatility(
                 price[i],
                 &option_inputs([spot[i], strike[i], rate[i], dividend_yield[i], 0.2, time[i]]),
                 accuracy,
-                max_evaluations.max(0) as usize,
+                size(max_evaluations, "max_evaluations")?,
             )
         })
         .collect();
@@ -2892,7 +3000,10 @@ fn create_exponential_correlation(times: Vec<f64>, beta: f64) -> List {
 }
 #[extendr]
 fn create_reduced_correlation(correlation: Vec<f64>, n: i32, factors: i32) -> List {
-    outcome(rmql::lmm_market::create_reduced_correlation(&correlation, n.max(0) as usize, factors.max(0) as usize).map(|c| list!(value = c)))
+    outcome(size(n, "n").and_then(|n| {
+        let factors = size(factors, "factors")?;
+        rmql::lmm_market::create_reduced_correlation(&correlation, n, factors).map(|c| list!(value = c))
+    }))
 }
 #[extendr]
 #[allow(clippy::too_many_arguments)]
@@ -2918,13 +3029,14 @@ fn compute_lmm_monte_carlo(
     seed: f64,
 ) -> List {
     let run = || -> Core<List> {
+        same_length(&[("kind", kind.len()), ("start", start.len()), ("end", end.len()), ("strike", strike.len()), ("expiry", expiry.len())])?;
         let spec = lmm_spec(&times, &forwards, &volatilities, &correlation, discount_start, backward_looking, model, &volatility_grid, factors, measure, discretization)?;
-        let (paths, steps) = (paths.max(0) as usize, steps_per_period.max(0) as usize);
+        let (paths, steps) = (size(paths, "paths")?, size(steps_per_period, "steps_per_period")?);
         let simulated = rmql::lmm_market::generate_lmm_paths(&spec, paths, steps, seed as u64)?;
         let (mut value, mut standard_error, mut formula) = (Vec::new(), Vec::new(), Vec::new());
         for i in 0..kind.len() {
-            formula.push(if kind[i] == "caplet" { rmql::lmm_market::compute_lmm_caplet_formula(&spec, start[i] as usize, strike[i])? } else { f64::NAN });
-            let (a, b) = (start[i] as usize, end[i] as usize);
+            formula.push(if kind[i] == "caplet" { rmql::lmm_market::compute_lmm_caplet_formula(&spec, size(start[i], "start")?, strike[i])? } else { f64::NAN });
+            let (a, b) = (size(start[i], "start")?, size(end[i], "end")?);
             let e = match kind[i].as_str() {
                 "swaption" if expiry[i].is_nan() => rmql::lmm_market::compute_lmm_swaption_value(&spec, &simulated, a, b, strike[i])?,
                 "swaption" => {
@@ -2962,7 +3074,7 @@ fn generate_lmm_paths(
 ) -> List {
     let run = || -> Core<List> {
         let spec = lmm_spec(&times, &forwards, &volatilities, &correlation, discount_start, backward_looking, model, &volatility_grid, factors, measure, discretization)?;
-        let p = rmql::lmm_market::generate_lmm_paths(&spec, paths.max(0) as usize, steps_per_period.max(0) as usize, seed as u64)?;
+        let p = rmql::lmm_market::generate_lmm_paths(&spec, size(paths, "paths")?, size(steps_per_period, "steps_per_period")?, seed as u64)?;
         // R's array order: path fastest, then time, then forward
         let (n_paths, n) = (p.state.len(), forwards.len());
         let mut state = vec![f64::NAN; n_paths * (n + 1) * n];
@@ -3006,7 +3118,7 @@ fn compute_rebonato_swaption_volatility(
         let spec = lmm_spec(&times, &forwards, &volatilities, &correlation, discount_start, backward_looking, model, &volatility_grid, factors, measure, discretization)?;
         let (mut vol, mut black) = (Vec::new(), Vec::new());
         for i in 0..start.len() {
-            let (a, b) = (start[i] as usize, end[i] as usize);
+            let (a, b) = (size(start[i], "start")?, size(end[i], "end")?);
             // NaN: exercised at the swap's start
             let t = if expiry[i].is_nan() { times.get(a).copied().unwrap_or(f64::NAN) } else { expiry[i] };
             let v = rmql::lmm_market::compute_rebonato_swaption_volatility_at(&spec, a, b, t)?;
@@ -3039,9 +3151,10 @@ fn calibrate_lmm_correlation(
         let n = forwards.len();
         let identity: Vec<f64> = (0..n * n).map(|k| if k / n == k % n { 1.0 } else { 0.0 }).collect();
         let spec = lmm_spec(&times, &forwards, &volatilities, &identity, discount_start, false, model, &volatility_grid, factors, measure, discretization)?;
-        let quotes: Vec<_> = (0..start.len())
-            .map(|i| rmql::lmm_market::SwaptionQuote { start: start[i] as usize, end: end[i] as usize, volatility: volatility[i] })
-            .collect();
+        same_length(&[("start", start.len()), ("end", end.len()), ("volatility", volatility.len())])?;
+        let quotes = (0..start.len())
+            .map(|i| Ok(rmql::lmm_market::SwaptionQuote { start: size(start[i], "start")?, end: size(end[i], "end")?, volatility: volatility[i] }))
+            .collect::<Core<Vec<_>>>()?;
         let fit = rmql::lmm_market::calibrate_lmm_correlation(&spec, &quotes, beta_max)?;
         Ok(list!(beta = fit.beta, fitted = fit.fitted, root_mean_square_error = fit.root_mean_square_error))
     };
@@ -3067,9 +3180,10 @@ fn calibrate_lmm_volatilities(
 ) -> List {
     let run = || -> Core<List> {
         let spec = lmm_spec(&times, &forwards, &volatilities, &correlation, discount_start, backward_looking, model, &volatility_grid, factors, measure, discretization)?;
-        let quotes: Vec<_> = (0..start.len())
-            .map(|i| rmql::lmm_market::SwaptionQuote { start: start[i].max(0) as usize, end: end[i].max(0) as usize, volatility: volatility[i] })
-            .collect();
+        same_length(&[("start", start.len()), ("end", end.len()), ("volatility", volatility.len())])?;
+        let quotes = (0..start.len())
+            .map(|i| Ok(rmql::lmm_market::SwaptionQuote { start: size(start[i], "start")?, end: size(end[i], "end")?, volatility: volatility[i] }))
+            .collect::<Core<Vec<_>>>()?;
         let fit = rmql::lmm_market::calibrate_lmm_volatilities(&spec, &quotes)?;
         Ok(list!(grid = fit.spec.volatility_grid.unwrap_or_default(), fitted = fit.fitted, max_error = fit.max_error))
     };
@@ -3100,11 +3214,11 @@ fn compute_lmm_bermudan_swaption(
 ) -> List {
     let run = || -> Core<List> {
         let spec = lmm_spec(&times, &forwards, &volatilities, &correlation, discount_start, backward_looking, model, &volatility_grid, factors, measure, discretization)?;
-        let (paths, steps) = (paths.max(0) as usize, steps_per_period.max(0) as usize);
+        let (paths, steps) = (size(paths, "paths")?, size(steps_per_period, "steps_per_period")?);
         let training = rmql::lmm_market::generate_lmm_paths(&spec, paths, steps, training_seed as u64)?;
         let evaluation = rmql::lmm_market::generate_lmm_paths(&spec, paths, steps, seed as u64)?;
-        let dates: Vec<usize> = exercise.iter().map(|&k| k.max(0) as usize).collect();
-        let r = rmql::lmm_market::compute_lmm_bermudan_swaption(&spec, &training, &evaluation, &dates, end.max(0) as usize, strike, payer)?;
+        let dates = exercise.iter().map(|&k| size(k, "exercise")).collect::<Core<Vec<usize>>>()?;
+        let r = rmql::lmm_market::compute_lmm_bermudan_swaption(&spec, &training, &evaluation, &dates, size(end, "end")?, strike, payer)?;
         Ok(list!(
             value = r.value,
             standard_error = r.standard_error,
@@ -3167,12 +3281,12 @@ fn compute_caplet_from_normals(
 /// Normals and the correlation come by rows.
 #[extendr]
 fn compute_correlated_normals(normals: Vec<f64>, correlation: Vec<f64>, dimension: i32) -> List {
-    outcome(lmm::compute_correlated_normals(&normals, &correlation, dimension.max(0) as usize).map(|v| list!(values = v)))
+    outcome(size(dimension, "dimension").and_then(|d| lmm::compute_correlated_normals(&normals, &correlation, d).map(|v| list!(values = v))))
 }
 #[extendr]
 fn generate_correlated_normals(correlation: Vec<f64>, dimension: i32, count: f64, seed: f64) -> List {
     let run = || -> Core<List> {
-        let v = lmm::generate_correlated_normals(&correlation, dimension.max(0) as usize, count.max(0.0) as usize, seed as u64)?;
+        let v = lmm::generate_correlated_normals(&correlation, size(dimension, "dimension")?, size_real(count, "count")?, seed as u64)?;
         Ok(list!(values = v))
     };
     outcome(run())
@@ -3197,7 +3311,7 @@ fn mbs_terms(values: &[f64], amortization: &str) -> Core<PassThroughTerms> {
         original_balance: values[0],
         mortgage_rate: values[1],
         pass_through_rate: values[2],
-        months: values[3] as usize,
+        months: size_real(values[3], "months")?,
         psa_multiplier: values[4],
         incentive_sensitivity: values[5],
         refinancing_cost: values[6],
@@ -3234,7 +3348,7 @@ fn compute_mbs_cashflows(terms: Vec<f64>, amortization: &str, refinance_rates: V
 fn compute_mbs_path_values(terms: Vec<f64>, amortization: &str, short_rates: Vec<f64>, refinance_rates: Vec<f64>, paths: i32, oas: f64) -> List {
     let run = || -> Core<List> {
         let terms = mbs_terms(&terms, amortization)?;
-        let rates = RatePaths { short_rates: &short_rates, refinance_rates: &refinance_rates, paths: paths.max(0) as usize };
+        let rates = RatePaths { short_rates: &short_rates, refinance_rates: &refinance_rates, paths: size(paths, "paths")? };
         let v = mbs::compute_mbs_path_values(&terms, &rates, oas)?;
         Ok(list!(price = v.prices, weighted_average_life = v.weighted_average_lives))
     };
@@ -3244,7 +3358,7 @@ fn compute_mbs_path_values(terms: Vec<f64>, amortization: &str, short_rates: Vec
 fn compute_mbs_oas(terms: Vec<f64>, amortization: &str, short_rates: Vec<f64>, refinance_rates: Vec<f64>, paths: i32, price: f64) -> List {
     let run = || -> Core<List> {
         let terms = mbs_terms(&terms, amortization)?;
-        let rates = RatePaths { short_rates: &short_rates, refinance_rates: &refinance_rates, paths: paths.max(0) as usize };
+        let rates = RatePaths { short_rates: &short_rates, refinance_rates: &refinance_rates, paths: size(paths, "paths")? };
         Ok(list!(value = mbs::compute_mbs_oas(&terms, &rates, price)?))
     };
     outcome(run())
@@ -3254,7 +3368,7 @@ fn compute_mbs_oas(terms: Vec<f64>, amortization: &str, short_rates: Vec<f64>, r
 fn generate_hull_white_monthly_rates(paths: i32, months: i32, flat_rate: f64, mean_reversion: f64, volatility: f64, seed: f64, antithetic: bool) -> List {
     let run = || -> Core<List> {
         let rates = mbs::generate_hull_white_monthly_rates(
-            paths.max(0) as usize, months.max(0) as usize, flat_rate, mean_reversion, volatility, seed as u64, antithetic,
+            size(paths, "paths")?, size(months, "months")?, flat_rate, mean_reversion, volatility, seed as u64, antithetic,
         )?;
         Ok(list!(rates = rates))
     };
@@ -3274,11 +3388,15 @@ fn generate_sobol_sequence(dimension: i32, points: f64) -> List {
         if !(points >= 1.0) || points > 1e8 {
             return Err(rmql::Error::InvalidInput { reason: format!("points must be from 1 to 1e8, not {points}") });
         }
-        let dimension = dimension.max(0) as usize;
+        let dimension = size(dimension, "dimension")?;
+        let count = size_real(points, "points")?;
+        if (count as f64) * (dimension as f64) > 1e8 {
+            return Err(rmql::Error::InvalidInput { reason: format!("points * dimension must be at most 1e8, not {count} * {dimension}") });
+        }
         let mut sobol = SobolSequence::new(dimension)?;
         let mut point = vec![0.0; dimension];
-        let mut values = Vec::with_capacity(points as usize * dimension);
-        for _ in 0..points as usize {
+        let mut values = Vec::with_capacity(count * dimension);
+        for _ in 0..count {
             sobol.next_point(&mut point);
             values.extend_from_slice(&point);
         }
@@ -3303,7 +3421,7 @@ fn generate_black_scholes_paths(
     let run = || -> Core<List> {
         let inputs = option_inputs([spot, spot, rate, dividend_yield, volatility, time]);
         let sequence = path_sequence(sequence, brownian_bridge, seed)?;
-        let prices = longstaff_schwartz::generate_black_scholes_paths(&inputs, steps.max(0) as usize, paths.max(0.0) as usize, sequence)?;
+        let prices = longstaff_schwartz::generate_black_scholes_paths(&inputs, size(steps, "steps")?, size_real(paths, "paths")?, sequence)?;
         Ok(list!(prices = prices))
     };
     outcome(run())
@@ -3332,7 +3450,7 @@ fn compute_longstaff_schwartz_value(
 ) -> List {
     let run = || -> Core<List> {
         let invalid = |reason: String| rmql::Error::InvalidInput { reason };
-        let count = calibration_paths.max(0.0) as usize;
+        let count = size_real(calibration_paths, "calibration_paths")?;
         let calibration = match calibration {
             "in_sample" => CalibrationPaths::InSample,
             "overlapping" => CalibrationPaths::Overlapping(count),
@@ -3348,10 +3466,10 @@ fn compute_longstaff_schwartz_value(
             return Err(invalid("exercise steps must be positive".into()));
         }
         let settings = LongstaffSchwartzSettings {
-            steps: steps.max(0) as usize,
-            paths: paths.max(0.0) as usize,
+            steps: size(steps, "steps")?,
+            paths: size_real(paths, "paths")?,
             sequence: path_sequence(sequence, brownian_bridge, seed)?,
-            basis_degree: basis_degree.max(0) as usize,
+            basis_degree: size(basis_degree, "basis_degree")?,
             include_payoff,
             calibration,
             few_in_the_money,
@@ -3405,11 +3523,11 @@ fn compute_monte_carlo_european_value(
 ) -> List {
     let run = || -> Core<List> {
         let settings = MonteCarloSettings {
-            paths: paths as u64,
+            paths: size_real(paths, "paths")? as u64,
             seed: seed as u64,
             antithetic,
             smoothing: if smoothing > 0.0 { Some(smoothing) } else { None },
-            threads: threads.max(0) as usize,
+            threads: thread_count(threads)?,
         };
         let r = options::compute_monte_carlo_european(
             names::parse_option_type(option_type)?,
@@ -3583,11 +3701,34 @@ fn compute_bond_values_batch(
     threads: i32,
 ) -> List {
     let run = || -> Core<List> {
+        let n = rate.len();
+        same_length(&[
+            ("rate", n),
+            ("settlement_days", settlement_days.len()),
+            ("face_amount", face_amount.len()),
+            ("effective_date", effective_date.len()),
+            ("termination_date", termination_date.len()),
+            ("tenor", tenor.len()),
+            ("calendar", calendar.len()),
+            ("convention", convention.len()),
+            ("termination_convention", termination_convention.len()),
+            ("rule", rule.len()),
+            ("end_of_month", end_of_month.len()),
+            ("coupon_rate", coupon_rate.len()),
+            ("day_count", day_count.len()),
+            ("payment_convention", payment_convention.len()),
+            ("redemption", redemption.len()),
+            ("issue_date", issue_date.len()),
+            ("yield_day_count", yield_day_count.len()),
+            ("compounding", compounding.len()),
+            ("frequency", frequency.len()),
+            ("evaluation_date", evaluation_date.len()),
+        ])?;
         let units = (0..rate.len())
             .map(|i| {
                 Ok(BondEvaluation {
                     spec: FixedRateBondSpec {
-                        settlement_days: settlement_days[i] as u32,
+                        settlement_days: natural(settlement_days[i], "settlement_days")?,
                         face_amount: face_amount[i],
                         schedule: ScheduleSpec {
                             effective_date: date(effective_date[i])?,
@@ -3620,7 +3761,7 @@ fn compute_bond_values_batch(
                 })
             })
             .collect::<Core<Vec<_>>>()?;
-        let rows = batch::compute_bond_values_batch(&units, threads as usize)?;
+        let rows = batch::compute_bond_values_batch(&units, thread_count(threads)?)?;
         let pick = |f: fn(&batch::BondValues) -> f64| -> Vec<f64> {
             rows.iter()
                 .map(|r| r.as_ref().map_or(na_real(), f))
@@ -3671,6 +3812,23 @@ fn compute_curve_values_batch(
     threads: i32,
 ) -> List {
     let run = || -> Core<List> {
+        same_length(&[
+            ("evaluation_date", evaluation_date.len()),
+            ("reference_date", reference_date.len()),
+            ("index", index.len()),
+            ("curve_day_count", curve_day_count.len()),
+            ("interpolation", interpolation.len()),
+            ("accuracy", accuracy.len()),
+        ])?;
+        same_length(&[
+            ("instrument_curve", instrument_curve.len()),
+            ("tenor", tenor.len()),
+            ("rate", rate.len()),
+            ("settlement_days", settlement_days.len()),
+            ("payment_frequency", payment_frequency.len()),
+            ("payment_lag", payment_lag.len()),
+        ])?;
+        same_length(&[("date_curve", date_curve.len()), ("date_serial", date_serial.len())])?;
         let mut units = Vec::with_capacity(evaluation_date.len());
         for c in 0..evaluation_date.len() {
             let number = c as i32 + 1;
@@ -3683,9 +3841,9 @@ fn compute_curve_values_batch(
                         OisCurveInstrument::Ois {
                             tenor: names::parse_period(&tenor[i])?,
                             rate: rate[i],
-                            settlement_days: settlement_days[i] as u32,
-                            payment_frequency: payment_frequency[i] as u32,
-                            payment_lag: payment_lag[i] as u32,
+                            settlement_days: natural(settlement_days[i], "settlement_days")?,
+                            payment_frequency: natural(payment_frequency[i], "payment_frequency")?,
+                            payment_lag: natural(payment_lag[i], "payment_lag")?,
                         }
                     })
                 })
@@ -3708,7 +3866,7 @@ fn compute_curve_values_batch(
                 day_count: names::parse_day_count(&curve_day_count[c])?,
             });
         }
-        let results = batch::compute_curve_values_batch(&units, threads as usize)?;
+        let results = batch::compute_curve_values_batch(&units, thread_count(threads)?)?;
         let (mut curve, mut serial, mut errors) = (Vec::new(), Vec::new(), Vec::new());
         let (mut discount, mut zero, mut forward, mut worst) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -3765,8 +3923,8 @@ fn panic_for_test() {
 // The module has the name of the R package, because R looks for its routines by that name.
 // ---- portfolio (docs/spec_portfolio.md) -------------------------------------------------------------------
 
-fn portfolio_inputs<'a>(returns: &'a [f64], assets: i32, weight_sum: f64, lower: Vec<f64>, upper: Vec<f64>) -> (ReturnMatrix<'a>, PortfolioConstraints) {
-    (ReturnMatrix { values: returns, assets: assets.max(0) as usize }, PortfolioConstraints { weight_sum, lower, upper })
+fn portfolio_inputs<'a>(returns: &'a [f64], assets: i32, weight_sum: f64, lower: Vec<f64>, upper: Vec<f64>) -> Core<(ReturnMatrix<'a>, PortfolioConstraints)> {
+    Ok((ReturnMatrix { values: returns, assets: size(assets, "assets")? }, PortfolioConstraints { weight_sum, lower, upper }))
 }
 /// `parameters`: risk aversion, risk-free rate, confidence level, target return, target volatility.
 fn portfolio_method(method: &str, parameters: &[f64], budget: Vec<f64>) -> Core<PortfolioMethod> {
@@ -3800,19 +3958,19 @@ fn optimal_portfolio_list(p: &OptimalPortfolio) -> List {
 #[extendr]
 fn compute_return_moments(returns: Vec<f64>, assets: i32) -> List {
     let run = || -> Core<List> {
-        let m = portfolio::compute_return_moments(&ReturnMatrix { values: &returns, assets: assets.max(0) as usize })?;
+        let m = portfolio::compute_return_moments(&ReturnMatrix { values: &returns, assets: size(assets, "assets")? })?;
         Ok(list!(mean = m.mean, covariance = m.covariance.concat(), periods = m.periods as i32))
     };
     outcome(run())
 }
 #[extendr]
 fn check_portfolio_constraints(assets: i32, weight_sum: f64, lower: Vec<f64>, upper: Vec<f64>) -> List {
-    outcome(PortfolioConstraints { weight_sum, lower, upper }.check(assets.max(0) as usize).map(|_| list!(valid = true)))
+    outcome(size(assets, "assets").and_then(|a| PortfolioConstraints { weight_sum, lower, upper }.check(a).map(|_| list!(valid = true))))
 }
 #[extendr]
 fn compute_optimal_portfolio(returns: Vec<f64>, assets: i32, weight_sum: f64, lower: Vec<f64>, upper: Vec<f64>, method: &str, parameters: Vec<f64>, budget: Vec<f64>) -> List {
     let run = || -> Core<List> {
-        let (r, c) = portfolio_inputs(&returns, assets, weight_sum, lower, upper);
+        let (r, c) = portfolio_inputs(&returns, assets, weight_sum, lower, upper)?;
         let method = portfolio_method(method, &parameters, budget)?;
         Ok(optimal_portfolio_list(&portfolio::compute_optimal_portfolio(&r, &c, &method)?))
     };
@@ -3821,7 +3979,7 @@ fn compute_optimal_portfolio(returns: Vec<f64>, assets: i32, weight_sum: f64, lo
 #[extendr]
 fn compute_efficient_frontier(returns: Vec<f64>, assets: i32, weight_sum: f64, lower: Vec<f64>, upper: Vec<f64>, targets: Vec<f64>) -> List {
     let run = || -> Core<List> {
-        let (r, c) = portfolio_inputs(&returns, assets, weight_sum, lower, upper);
+        let (r, c) = portfolio_inputs(&returns, assets, weight_sum, lower, upper)?;
         let points = portfolio::compute_efficient_frontier(&r, &c, &targets)?;
         Ok(list!(
             expected_return = points.iter().map(|p| p.expected_return).collect::<Vec<f64>>(),
@@ -3835,7 +3993,7 @@ fn compute_efficient_frontier(returns: Vec<f64>, assets: i32, weight_sum: f64, l
 #[extendr]
 fn compute_portfolio_risk(returns: Vec<f64>, assets: i32, weights: Vec<f64>, confidence_level: f64) -> List {
     let run = || -> Core<List> {
-        let r = portfolio::compute_portfolio_risk(&ReturnMatrix { values: &returns, assets: assets.max(0) as usize }, &weights, confidence_level)?;
+        let r = portfolio::compute_portfolio_risk(&ReturnMatrix { values: &returns, assets: size(assets, "assets")? }, &weights, confidence_level)?;
         Ok(list!(
             expected_return = r.expected_return,
             volatility = r.volatility,
@@ -3884,7 +4042,7 @@ fn compute_monte_carlo_risk(weights: Vec<f64>, mean: Vec<f64>, covariance: Vec<f
         if !(scenarios >= 1.0 && scenarios.fract() == 0.0 && seed >= 0.0 && seed.fract() == 0.0) {
             return Err(rmql::Error::InvalidInput { reason: "the scenarios and the seed must be whole numbers".into() });
         }
-        let settings = market_risk::MonteCarloSettings { scenarios: scenarios as usize, seed: seed as u64, batches: batches.max(0) as usize, threads: threads.max(0) as usize };
+        let settings = market_risk::MonteCarloSettings { scenarios: size_real(scenarios, "scenarios")?, seed: seed as u64, batches: size(batches, "batches")?, threads: thread_count(threads)? };
         let r = market_risk::compute_monte_carlo_risk(&weights, &mean, &cov, confidence_level, &settings)?;
         Ok(list!(var = r.var, es = r.es, var_standard_error = r.var_standard_error, es_standard_error = r.es_standard_error, scenarios = r.scenarios as f64))
     };
@@ -3921,7 +4079,7 @@ fn compute_rolling_var(losses: Vec<f64>, window: i32, confidence_level: f64, met
             "gaussian" => market_risk::RollingMethod::Gaussian,
             other => return Err(rmql::Error::InvalidInput { reason: format!("unknown rolling method `{other}`") }),
         };
-        Ok(list!(var = market_risk::compute_rolling_var(&losses, window.max(0) as usize, confidence_level, method)?))
+        Ok(list!(var = market_risk::compute_rolling_var(&losses, size(window, "window")?, confidence_level, method)?))
     };
     outcome(run())
 }
@@ -3930,7 +4088,7 @@ fn compute_traffic_light(exceptions: Vec<i32>, observations: i32, confidence_lev
     let run = || -> Core<List> {
         let r: Vec<(market_risk::TrafficLight, f64)> = exceptions
             .iter()
-            .map(|&k| market_risk::compute_traffic_light(k.max(0) as usize, observations.max(0) as usize, confidence_level))
+            .map(|&k| market_risk::compute_traffic_light(size(k, "k")?, size(observations, "observations")?, confidence_level))
             .collect::<Core<_>>()?;
         let zone = |z: market_risk::TrafficLight| match z {
             market_risk::TrafficLight::Green => "green",
@@ -3967,7 +4125,7 @@ fn compute_conditional_pd(pd: Vec<f64>, rho: Vec<f64>, z: Vec<f64>) -> List {
 #[extendr]
 fn compute_credit_loss_distribution(pd: Vec<f64>, ead: Vec<f64>, lgd: Vec<f64>, rho: Vec<f64>, unit: f64, panels: i32) -> List {
     let run = || -> Core<List> {
-        let d = credit_risk::compute_credit_loss_distribution(&obligors_of(&pd, &ead, &lgd, &rho)?, unit, panels.max(0) as usize)?;
+        let d = credit_risk::compute_credit_loss_distribution(&obligors_of(&pd, &ead, &lgd, &rho)?, unit, size(panels, "panels")?)?;
         Ok(list!(probability = d.probability.clone(), mean = d.mean(), standard_deviation = d.standard_deviation()))
     };
     outcome(run())
@@ -3994,7 +4152,7 @@ fn simulate_credit_losses(pd: Vec<f64>, ead: Vec<f64>, lgd: Vec<f64>, rho: Vec<f
         if !(scenarios >= 1.0 && scenarios.fract() == 0.0 && seed >= 0.0 && seed.fract() == 0.0) {
             return Err(rmql::Error::InvalidInput { reason: "the scenarios and the seed must be whole numbers".into() });
         }
-        let losses = credit_risk::simulate_credit_losses(&obligors_of(&pd, &ead, &lgd, &rho)?, scenarios as usize, seed as u64, threads.max(0) as usize)?;
+        let losses = credit_risk::simulate_credit_losses(&obligors_of(&pd, &ead, &lgd, &rho)?, size_real(scenarios, "scenarios")?, seed as u64, thread_count(threads)?)?;
         Ok(list!(loss = losses))
     };
     outcome(run())
@@ -4060,7 +4218,7 @@ fn compute_lhp_expected_tranche_loss(pd: f64, lgd: f64, rho: f64, attachment: Ve
         if attachment.len() != detachment.len() {
             return Err(rmql::Error::InvalidInput { reason: "one detachment per attachment".into() });
         }
-        let v = attachment.iter().zip(&detachment).map(|(a, b)| tranche::compute_lhp_expected_tranche_loss(pd, lgd, rho, *a, *b, panels.max(1) as usize)).collect::<Core<Vec<f64>>>()?;
+        let v = attachment.iter().zip(&detachment).map(|(a, b)| tranche::compute_lhp_expected_tranche_loss(pd, lgd, rho, *a, *b, positive_size(panels, "panels")?)).collect::<Core<Vec<f64>>>()?;
         Ok(list!(value = v))
     };
     outcome(run())
@@ -4073,7 +4231,7 @@ fn compute_tranche_legs(hazard: Vec<f64>, ead: Vec<f64>, lgd: Vec<f64>, rho: Vec
             return Err(rmql::Error::InvalidInput { reason: "hazard, EAD, LGD and rho must have one value per obligor".into() });
         }
         let o: Vec<tranche::HazardObligor> = (0..n).map(|i| tranche::HazardObligor { hazard: hazard[i], ead: ead[i], lgd: lgd[i], rho: rho[i] }).collect();
-        let l = tranche::compute_tranche_legs(&o, unit, &times, discount_rate, attachment, detachment, panels.max(1) as usize)?;
+        let l = tranche::compute_tranche_legs(&o, unit, &times, discount_rate, attachment, detachment, positive_size(panels, "panels")?)?;
         Ok(list!(
             expected_tranche_loss = l.expected_tranche_loss,
             discount = l.discount,
@@ -4135,7 +4293,7 @@ fn trs_periods(
     Ok(trs::TrsPeriodSpec {
         effective_date: date(effective_date)?,
         termination_date: date(termination_date)?,
-        frequency: frequency as u32,
+        frequency: natural(frequency, "frequency")?,
         calendar: calendar_of(calendar)?,
         period_convention: names::parse_business_day_convention(period_convention)?,
         rule: names::parse_date_generation_rule(rule)?,
@@ -4146,7 +4304,7 @@ fn trs_periods(
             Some(trs::PaymentTerms {
                 calendar: calendar_of(payment_calendar)?,
                 convention: names::parse_business_day_convention(payment_convention)?,
-                lag: payment_lag as u32,
+                lag: natural(payment_lag, "payment_lag")?,
             })
         },
     })
@@ -4191,7 +4349,7 @@ fn create_trs_funding_leg(
             day_count: names::parse_day_count(day_count)?,
             notional,
             spread,
-            lookback: lookback as u32,
+            lookback: natural(lookback, "lookback")?,
             reset_relative_to: match reset_relative_to {
                 "period_start" => trs::ResetRelativeTo::PeriodStart,
                 "period_end" => trs::ResetRelativeTo::PeriodEnd,

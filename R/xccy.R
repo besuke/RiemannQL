@@ -67,7 +67,7 @@ bootstrap_xccy_curve <- function(evaluation_date, base_curve, quote_curve, base_
   if (is.null(collateral_curve)) collateral_curve <- if (as_flag(base_is_collateral)) base_curve else quote_curve
   x <- checked(.Call(wrap__bootstrap_xccy_curve, as_serial(evaluation_date), base_curve$pointer, quote_curve$pointer, collateral_curve$pointer,
                      as_flag(base_is_collateral), as.numeric(fx_spot), instruments$type, instruments$tenor, instruments$quote, instruments$fixing_days,
-                     instruments$payment_frequency, as.integer(instruments$basis_on_base_leg), instruments$resetting,
+                     instruments$payment_frequency, flags_for_rust(as.logical(instruments$basis_on_base_leg), "instruments$basis_on_base_leg"), instruments$resetting,
                      if (is.null(calendar)) "" else calendar, convention, as_flag(end_of_month), day_count, as.numeric(accuracy)))
   index <- if (as_flag(base_is_collateral)) quote_curve$index else base_curve$index
   curve <- given(x$value, "cross-currency", index)

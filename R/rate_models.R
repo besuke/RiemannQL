@@ -161,7 +161,7 @@ calibrate_hull_white <- function(curve, bond_options = NULL, swaptions = NULL, i
   fit <- checked(.Call(
     wrap__calibrate_hull_white, as.character(bond_options$option_type), as.numeric(bond_options$strike), as.numeric(bond_options$maturity),
     as.numeric(bond_options$bond_maturity), as.numeric(bond_options$price), column_or(bond_options, "weight", 1),
-    as.integer(swaptions$payer), as.numeric(swaptions$maturity), as.integer(lengths(times)), as.numeric(unlist(times)), as.numeric(unlist(coupons)),
+    flags_for_rust(as.logical(swaptions$payer), "swaptions$payer"), as.numeric(swaptions$maturity), as.integer(lengths(times)), as.numeric(unlist(times)), as.numeric(unlist(coupons)),
     column_or(swaptions, "nominal", 1), as.numeric(swaptions$price), column_or(swaptions, "weight", 1), curve$pointer,
     as.numeric(initial_mean_reversion), as.numeric(initial_volatility), as_flag(fix_mean_reversion), as.integer(max_iterations)
   ))
