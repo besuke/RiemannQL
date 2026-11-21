@@ -49,8 +49,8 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 | クライアント | 要望 | 出典 | rmql の状態 |
 |---|---|---|---|
-| Infrago Quant・Carmine Studio | コール債の行使判断（コール日ごとの継続価値・コール価格・行使の有無、境界） | Carmine `server/R/callable_model.R`（原稿の独自の R 関数で求めていた） | **対応済み（2026-11-19、未公開）**：`compute_hull_white_callable_bond_decisions()`。Coral Book II-8.4.2 の `decisions` と 5 ケース 10,918 行で照合（`docs/spec_hull_white.md` 1.2 節）。両クライアントは使用済み。公開は 0.3.5 |
-| Carmine Studio | OIS スワップを期間（`7Y`）で作る（`MakeOIS` の規則） | `reconciliation/RECONCILIATION.md` 6 章 #1 | **対応済み（2026-11-18、未公開）**：`compute_ois_swap_dates()`。公開は 0.3.5。クライアント側の置き換えは未了（「まず読む」） |
+| Infrago Quant・Carmine Studio | コール債の行使判断（コール日ごとの継続価値・コール価格・行使の有無、境界） | Carmine `server/R/callable_model.R`（原稿の独自の R 関数で求めていた） | **対応済み（2026-11-19）。0.4.0 で公開済み**：`compute_hull_white_callable_bond_decisions()`。Coral Book II-8.4.2 の `decisions` と 5 ケース 10,918 行で照合（`docs/spec_hull_white.md` 1.2 節）。両クライアントは使用済み |
+| Carmine Studio | OIS スワップを期間（`7Y`）で作る（`MakeOIS` の規則） | `reconciliation/RECONCILIATION.md` 6 章 #1 | **対応済み（2026-11-18）。0.4.0 で公開済み**：`compute_ois_swap_dates()`。クライアント側の置き換えは未了（「まず読む」） |
 | Carmine Studio | 照合に使った rmql のコミットを固定する | 同 #5 | 0.3.2 は Releases の zip と `RemoteSha` で固定できるようになった。クライアント側の記録は未更新 |
 | Carmine Studio | ブラウザーで直接動かす（WebAssembly 版） | 同 #6 | L1〜L3 は未着手 |
 | Carmine Studio | 元本リセット型 CCS、FX スワップによる受渡日の調整、CCS の期間構造の校正 | `README.md` の円換算 ASW の「未対応」 | 一部の部品（`create_xccy_instruments` の `resetting`、`bootstrap_xccy_curve`）はある。クライアントから使える形かは未確認 |
@@ -70,7 +70,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 ## 文書の索引（`docs/`）
 
 - 全体：`specification.md`（原則 R1〜R16、7 章の開発段階、5.1 の許容誤差）、`naming_migration.md`（旧名と新名）、`client_guide.md`（クライアントの入れ方・呼び方）、`design_distributed.md`（分散計算・GPU の構想）、`library_comparison.md`（QuantLib と finmath-lib の比較）
-- 照合の範囲：`lagrangefinance_coverage.md`（Coral Book の計算の網羅状況）、`quantlib_guide_inventory.md`（QuantLib Guide と公式 Examples の棚卸し）
+- 照合の範囲：`lagrangefinance_coverage.md`（Coral Book の計算の網羅状況）、`quantlib_guide_inventory.md`（QuantLib Guide と公式 Examples の棚卸し）、`quantlib_jp_coverage.md`（日本語の QuantLib 解説サイトの更新履歴 46 項目との照合。2026-11-21、ソース確認のみ）
 - 段階ごとの仕様と照合結果：
 
 | 段階 | 文書 |
@@ -128,11 +128,11 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | Rust の中核 `rmql::ois::compute_ois_swap_dates` | **完了**。QuantLib 1.42 `MakeOIS` と 13,520 件で照合し、成功 13,514 件は完全一致、失敗 6 件も同じ（`docs/spec_ois_swap.md` 7 章）。コミット済み（`d8c5ba7`） |
 | R の関数 `compute_ois_swap_dates(index, evaluation_date, tenor, settlement_days = 2L, on_error)` | **実装とテストは完了、コミット済み（2026-11-18）**。ラッパーは `src/rust/src/lib.rs`、R 関数は `R/ois_swaps.R`、ヘルプは `man/compute_ois_swap_dates.Rd`、テストは `tests/testthat/test-ois-swap-dates.R`。R のテスト全体は 156 件成功、Rust は 278 件成功、`cargo clippy --all-targets` は通る |
 | Carmine Studio の置き換え | **未了**。`../Carmine/server/R/tona_ois_model.R` の `TONA_SWAP_DATES` を `compute_ois_swap_dates("tonar", evaluation_date, "7Y")` に置き換える。結果は同じ日付（開始 2026-09-14、満期 2033-09-14）のはず。置き換えたら `reconciliation/RECONCILIATION.md` 6 章 #1 を「解消」に更新する（クライアントの会話で、頼まれたときだけコミット） |
-| 版と公開 | **未了**。`DESCRIPTION` を 0.3.5 にして、下の「配布」の手順で公開する。公開してから、Carmine Studio は `stopifnot(packageVersion("rmql") >= "0.3.5")` を足す |
+| 版と公開 | **0.4.0 は公開済み（2026-11-20）**。リポジトリの `DESCRIPTION` と Cargo は 0.4.1（2026-11-21 に揃えた）で、0.4.1 の公開は未確認。Carmine Studio が `stopifnot(packageVersion("rmql") >= "0.4.0")` を足したかは未確認 |
 
 **注意**：
 
-- 既定のライブラリーの `rmql` は 0.3.2 のまま（別の R が DLL を使っている）。新しい関数を試すには、`R CMD INSTALL -l <別ライブラリー> .` に入れる（今回は `C:/rfmdev/lib`）。
+- 既定のライブラリーの `rmql` は 0.3.2 のまま（別の R が DLL を使っている）かもしれない（2026-11-21 は未確認。0.4.0 は `C:/rfmdev` にある）。新しい関数を試すには、`R CMD INSTALL -l <別ライブラリー> .` に入れる（今回は `C:/rfmdev/lib`）。
 - `src/rust`（ワークスペースの外）の `cargo clippy` は、もとから 13 件のエラーが出る（引数の多さ、不要な型変換など）。今回の追加分ではない。プロジェクトの検査は、ルートの `cargo clippy --all-targets -- -D warnings`。
 - 1 日の OIS が QuantLib で縮退して失敗するケース（年末年始）は、`compute_ois_swap_dates` は日付を返し、`create_ois_swap` が同じく失敗する（テストで確認済み）。
 
@@ -158,7 +158,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 **配布（`docs/spec_r.md` 8 章）**：
 
-- 最新は 0.3.4（2026-11-18）。
+- 公開済みの最新は 0.4.0（2026-11-20）。リポジトリは 0.4.1（公開は未確認）。以下の記述は 0.3.4 の時点のもの。
   - **Windows の入れ方（Rust なし）**：`install.packages("rmql", repos = c("https://besuke.github.io/RiemannQL", "https://cloud.r-project.org"))`。公開した URL から、Rust を外した PATH で導入と smoke test 34 項目を確認済み（`dist/smoke_from_pages_0.3.4.log`）。
   - `remotes::install_github("besuke/RiemannQL")`（`subdir` なし）：`DESCRIPTION` をリポジトリの直下に置いた（2026-11-19、`docs/spec_r.md` 8.9）。remotes はリポジトリ全体を取るので、中核の `crates/rmql` が隣にあり、`configure` はそれを確かめるだけである。Rust と Rtools が要る。Rust がなければ `configure.win` が上の入れ方を示して止まる。旧構成（`crates/rmql-r` に `DESCRIPTION`、`subdir` が必要、`RemoteSha` で中核を取る）は廃止した。
   - Windows zip と tar.gz は GitHub Releases の `v0.3.4` にもある。
