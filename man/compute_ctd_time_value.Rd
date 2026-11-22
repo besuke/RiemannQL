@@ -13,7 +13,8 @@ compute_ctd_time_value(
   correlation = NULL,
   paths = 2000L,
   seed = 1,
-  day_count = "actual_365_fixed"
+  day_count = "actual_365_fixed",
+  threads = 0L
 )
 }
 \arguments{
@@ -30,6 +31,8 @@ compute_ctd_time_value(
 \item{paths, seed}{Number of paths and the seed.}
 
 \item{day_count}{Day count of the result's times.}
+
+\item{threads}{Worker threads; 0 means one per logical processor. The result does not depend on it.}
 }
 \value{
 A tibble with \code{date}, \code{intrinsic} (the choice by today's forwards, as \code{\link[=create_ctd_curve]{create_ctd_curve()}}), \code{value},

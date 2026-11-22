@@ -19,6 +19,7 @@
 use crate::curves::{LogDiscountInterpolation, YieldCurve};
 use crate::time::{Date, DayCount};
 use crate::Error;
+use rayon::prelude::*;
 use crate::math::normal::{compute_normal_cdf, compute_normal_pdf};
 use crate::math::random::generate_standard_normal;
 
@@ -139,6 +140,10 @@ fn ou_covariance(rho: f64, a: &SpreadDynamics, b: &SpreadDynamics, h: f64) -> f6
 /// [`SpreadDynamics`] (one per option after the first, correlated by `correlation`, by rows). The
 /// reference's rate is taken as independent of the spreads, and the spreads' expectations as today's
 /// forward spreads. Exact Ornstein-Uhlenbeck steps of one day; `paths` paths from `seed`.
+///
+/// The paths run on `threads` worker threads (0: rayon's default, usually one per logical processor; every count,
+/// also 1, runs on worker threads, see [`crate::batch::map_parallel`]). Each path depends on its own index only, and
+/// the sums are taken in the order of the paths, so the result does not depend on the number of threads.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_ctd_time_value(
     reference: Date,
@@ -149,6 +154,7 @@ pub fn compute_ctd_time_value(
     correlation: &[f64],
     paths: usize,
     seed: u64,
+    threads: usize,
 ) -> Result<CtdTimeValue, Error> {
     let invalid = |reason: String| Err(Error::InvalidInput { reason });
     if options.is_empty() || spreads.len() + 1 != options.len() {
@@ -170,9 +176,9 @@ pub fn compute_ctd_time_value(
     let end = dates[dates.len() - 1];
     let intrinsic_curve = create_ctd_curve(reference, end, day_count, options)?;
     let days = (end.serial() - reference.serial()) as usize;
-    // today's daily forwards, the spreads over the reference, and the days' year fractions
+    // today's daily forwards, the spreads over the reference (by day, then option), and the days' year fractions
     let mut reference_forward = Vec::with_capacity(days);
-    let mut spread = vec![Vec::with_capacity(days); m];
+    let mut spread = Vec::with_capacity(days * m);
     let mut start_time = Vec::with_capacity(days);
     let mut length = Vec::with_capacity(days);
     let mut previous: Vec<f64> = options.iter().map(|o| o.curve.discount(reference)).collect::<Result<_, Error>>()?;
@@ -182,65 +188,96 @@ pub fn compute_ctd_time_value(
         let current: Vec<f64> = options.iter().map(|o| o.curve.discount(to)).collect::<Result<_, Error>>()?;
         let forwards: Vec<f64> = previous.iter().zip(&current).map(|(p, c)| (p / c).ln()).collect();
         reference_forward.push(forwards[0]);
-        for (c, s) in spread.iter_mut().enumerate() {
-            s.push(forwards[c + 1] - forwards[0]);
-        }
+        spread.extend((0..m).map(|c| forwards[c + 1] - forwards[0]));
         start_time.push(day_count.year_fraction(reference, from, None, None)?);
         length.push(day_count.year_fraction(from, to, None, None)?);
         previous = current;
     }
-    // the one-day steps' Cholesky factors on the spreads that move, by the step's length
+    // The one-day steps on the spreads that move: the Cholesky factor of the step's covariance (one per step length) and
+    // the decay of each spread, laid out by day, so that the loop over the paths computes and allocates nothing.
+    // X moves from the start of day k - 1 to the start of day k; day 0 starts at X = 0.
     let active: Vec<usize> = (0..m).filter(|&c| spreads[c].volatility > 0.0).collect();
-    let mut factors: Vec<(f64, Vec<Vec<f64>>)> = Vec::new();
-    let mut steps: Vec<Vec<Vec<f64>>> = Vec::with_capacity(days);
-    for k in 0..days {
-        // X moves from the start of day k - 1 to the start of day k; day 0 starts at X = 0
-        let h = if k == 0 { 0.0 } else { start_time[k] - start_time[k - 1] };
+    let na = active.len();
+    let mut moves = vec![false; days];
+    let mut decay = vec![0.0; days * na];
+    let mut factor = vec![0.0; days * na * na];
+    let mut by_length: Vec<(f64, Vec<Vec<f64>>)> = Vec::new();
+    for k in 1..days {
+        let h = start_time[k] - start_time[k - 1];
         if !(h > 0.0) || active.is_empty() {
-            steps.push(Vec::new());
             continue;
         }
-        if let Some((_, f)) = factors.iter().find(|(x, _)| *x == h) {
-            steps.push(f.clone());
-            continue;
+        let slot = match by_length.iter().position(|(x, _)| *x == h) {
+            Some(slot) => slot,
+            None => {
+                let cov: Vec<Vec<f64>> = active
+                    .iter()
+                    .map(|&a| active.iter().map(|&b| ou_covariance(correlation[a * m + b], &spreads[a], &spreads[b], h)).collect())
+                    .collect();
+                by_length.push((h, crate::math::linear::compute_cholesky(&cov)?));
+                by_length.len() - 1
+            }
+        };
+        moves[k] = true;
+        for (row, &a) in active.iter().enumerate() {
+            let base = k * na + row;
+            decay[base] = (-spreads[a].mean_reversion * h).exp();
+            factor[base * na..(base + 1) * na].copy_from_slice(&by_length[slot].1[row]);
         }
-        let cov: Vec<Vec<f64>> = active
-            .iter()
-            .map(|&a| active.iter().map(|&b| ou_covariance(correlation[a * m + b], &spreads[a], &spreads[b], h)).collect())
-            .collect();
-        let f = crate::math::linear::compute_cholesky(&cov)?;
-        factors.push((h, f.clone()));
-        steps.push(f);
     }
     let index: Vec<usize> = dates.iter().map(|d| (d.serial() - reference.serial()) as usize).collect();
-    let (mut sum, mut sum_squares, mut sum_log) = (vec![0.0; dates.len()], vec![0.0; dates.len()], vec![0.0; dates.len()]);
-    let mut sum_log_squares = vec![0.0; dates.len()];
-    for p in 0..paths {
+    // One path: the log discount at each of the dates. Each path depends on its own index only (counter-based draws).
+    let simulate = |p: usize| -> Vec<f64> {
         let mut x = vec![0.0; m];
+        let mut z = vec![0.0; na];
+        let mut out = vec![0.0; dates.len()];
         let mut log_discount = 0.0;
         let mut next = 0;
         for k in 0..days {
-            if !steps[k].is_empty() {
-                let z: Vec<f64> = (0..active.len()).map(|i| generate_standard_normal(seed, p as u64, (k * m + i) as u64)).collect();
-                let h = start_time[k] - start_time[k - 1];
+            if moves[k] {
+                for (i, w) in z.iter_mut().enumerate() {
+                    *w = generate_standard_normal(seed, p as u64, (k * m + i) as u64);
+                }
                 for (row, &a) in active.iter().enumerate() {
-                    let decay = (-spreads[a].mean_reversion * h).exp();
-                    let shock: f64 = steps[k][row].iter().zip(&z).map(|(l, w)| l * w).sum();
-                    x[a] = x[a] * decay + shock;
+                    let base = k * na + row;
+                    let shock: f64 = factor[base * na..(base + 1) * na].iter().zip(z.iter()).map(|(l, w)| l * w).sum();
+                    x[a] = x[a] * decay[base] + shock;
                 }
             }
-            let best = (0..m).map(|c| spread[c][k] + x[c] * length[k]).fold(0.0, f64::max);
+            let best = (0..m).map(|c| spread[k * m + c] + x[c] * length[k]).fold(0.0, f64::max);
             log_discount += reference_forward[k] + best;
             while next < index.len() && index[next] == k + 1 {
-                let v = (-log_discount).exp();
-                sum[next] += v;
-                sum_squares[next] += v * v;
-                sum_log[next] += log_discount;
-                sum_log_squares[next] += log_discount * log_discount;
+                out[next] = log_discount;
                 next += 1;
             }
         }
-    }
+        out
+    };
+    let (mut sum, mut sum_squares, mut sum_log) = (vec![0.0; dates.len()], vec![0.0; dates.len()], vec![0.0; dates.len()]);
+    let mut sum_log_squares = vec![0.0; dates.len()];
+    // blocks of paths: the paths of a block in parallel, then their sums in the order of the paths
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(|e| Error::InvalidInput { reason: format!("cannot start {threads} threads: {e}") })?;
+    let block = (1_000_000 / dates.len()).clamp(64, 65_536);
+    pool.install(|| {
+        let mut first = 0;
+        while first < paths {
+            let last = (first + block).min(paths);
+            let rows: Vec<Vec<f64>> = (first..last).into_par_iter().map(simulate).collect();
+            for log_discount in &rows {
+                for (next, &l) in log_discount.iter().enumerate() {
+                    let v = (-l).exp();
+                    sum[next] += v;
+                    sum_squares[next] += v * v;
+                    sum_log[next] += l;
+                    sum_log_squares[next] += l * l;
+                }
+            }
+            first = last;
+        }
+    });
     let n = paths as f64;
     let value: Vec<f64> = sum.iter().map(|s| s / n).collect();
     let standard_error = sum.iter().zip(&sum_squares).map(|(s, q)| ((q - s * s / n) / (n - 1.0)).max(0.0).sqrt() / n.sqrt()).collect();
@@ -253,7 +290,7 @@ pub fn compute_ctd_time_value(
         let mut next = 0;
         for k in 0..days {
             let sd = ou_covariance(1.0, s, s, start_time[k]).sqrt() * length[k];
-            let mean = spread[0][k];
+            let mean = spread[k * m];
             let floor = if sd > 0.0 {
                 let z = mean / sd;
                 mean * compute_normal_cdf(z) + sd * compute_normal_pdf(z)
@@ -330,7 +367,7 @@ mod tests {
         let dates = [d(2027, 11, 4), d(2029, 11, 4), d(2036, 11, 4)];
         let (jpy, usd) = crossing();
         let still = [SpreadDynamics { volatility: 0.0, mean_reversion: 0.1 }];
-        let r = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd], &still, &[1.0], 10, 1).unwrap();
+        let r = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd], &still, &[1.0], 10, 1, 1).unwrap();
         let formula = r.first_order_formula.as_ref().unwrap();
         for i in 0..dates.len() {
             assert!((r.value[i] / r.intrinsic[i] - 1.0).abs() < 1e-12, "{i}");
@@ -338,7 +375,7 @@ mod tests {
             assert!(r.standard_error[i] < 1e-15);
         }
         // one currency: no choice, the curve itself
-        let alone = compute_ctd_time_value(today, &dates, &act365(), std::slice::from_ref(&jpy), &[], &[], 10, 1).unwrap();
+        let alone = compute_ctd_time_value(today, &dates, &act365(), std::slice::from_ref(&jpy), &[], &[], 10, 1, 1).unwrap();
         for (i, day) in dates.iter().enumerate() {
             assert!((alone.value[i] / jpy.curve.discount(*day).unwrap() - 1.0).abs() < 1e-12);
         }
@@ -351,7 +388,7 @@ mod tests {
         let dates = [d(2027, 11, 4), d(2029, 11, 4), d(2036, 11, 4)];
         let (jpy, usd) = crossing();
         let moving = [SpreadDynamics { volatility: 0.005, mean_reversion: 0.1 }];
-        let r = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &moving, &[1.0], 2000, 7).unwrap();
+        let r = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &moving, &[1.0], 2000, 7, 1).unwrap();
         let formula = r.first_order_formula.as_ref().unwrap();
         for i in 0..dates.len() {
             // the expected log discount is a sum of Bachelier floors: unbiased against the paths
@@ -366,12 +403,12 @@ mod tests {
         assert!(r.intrinsic[last] - r.value[last] > 4.0 * r.standard_error[last], "{} against {} ± {}", r.intrinsic[last], r.value[last], r.standard_error[last]);
         // more volatility, more time value
         let wild = [SpreadDynamics { volatility: 0.01, mean_reversion: 0.1 }];
-        let w = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &wild, &[1.0], 10, 7).unwrap();
+        let w = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &wild, &[1.0], 10, 7, 1).unwrap();
         assert!(w.first_order_formula.unwrap()[last] < formula[last]);
         // three currencies: a third option can only add value to the poster, and the paths keep Jensen
         let eur = CollateralOption { name: "EUR".into(), curve: zero(&[0.007, 0.007, 0.0075, 0.009]) };
         let both = [moving[0], SpreadDynamics { volatility: 0.004, mean_reversion: 0.0 }];
-        let three = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone(), eur], &both, &[1.0, 0.5, 0.5, 1.0], 2000, 7).unwrap();
+        let three = compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone(), eur], &both, &[1.0, 0.5, 0.5, 1.0], 2000, 7, 1).unwrap();
         assert!(three.first_order_formula.is_none());
         for i in 0..dates.len() {
             assert!(three.value[i] >= three.first_order[i]);
@@ -379,10 +416,26 @@ mod tests {
             assert!(three.value[i] < r.value[i] + 4.0 * (three.standard_error[i] + r.standard_error[i]));
         }
         // invalid inputs
-        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &[], &[], 10, 1).is_err());
-        assert!(compute_ctd_time_value(today, &[dates[1], dates[0]], &act365(), &[jpy.clone(), usd.clone()], &moving, &[1.0], 10, 1).is_err());
-        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &[SpreadDynamics { volatility: -0.1, mean_reversion: 0.0 }], &[1.0], 10, 1).is_err());
-        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy, usd], &moving, &[1.0, 0.0], 10, 1).is_err());
+        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &[], &[], 10, 1, 1).is_err());
+        assert!(compute_ctd_time_value(today, &[dates[1], dates[0]], &act365(), &[jpy.clone(), usd.clone()], &moving, &[1.0], 10, 1, 1).is_err());
+        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy.clone(), usd.clone()], &[SpreadDynamics { volatility: -0.1, mean_reversion: 0.0 }], &[1.0], 10, 1, 1).is_err());
+        assert!(compute_ctd_time_value(today, &dates, &act365(), &[jpy, usd], &moving, &[1.0, 0.0], 10, 1, 1).is_err());
+    }
+
+    #[test]
+    fn the_result_does_not_depend_on_the_number_of_threads() {
+        let today = d(2026, 11, 4);
+        let dates = [d(2027, 5, 4), d(2028, 11, 4), d(2031, 11, 4)];
+        let jpy = CollateralOption { name: "JPY".into(), curve: zero(&[0.005, 0.005, 0.005, 0.012]) };
+        let usd = CollateralOption { name: "USD".into(), curve: zero(&[0.009, 0.009, 0.009, 0.006]) };
+        let eur = CollateralOption { name: "EUR".into(), curve: zero(&[0.007, 0.007, 0.011, 0.009]) };
+        let both = [SpreadDynamics { volatility: 0.004, mean_reversion: 0.1 }, SpreadDynamics { volatility: 0.002, mean_reversion: 0.0 }];
+        let options = [jpy, usd, eur];
+        let run = |threads| compute_ctd_time_value(today, &dates, &act365(), &options, &both, &[1.0, 0.5, 0.5, 1.0], 700, 11, threads).unwrap();
+        let first = run(1);
+        for threads in [2, 3, 8, 0] {
+            assert_eq!(run(threads), first, "{threads} threads");
+        }
     }
 
     #[test]

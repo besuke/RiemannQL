@@ -1584,6 +1584,7 @@ fn compute_ctd_time_value(
     correlation: Vec<f64>,
     paths: i32,
     seed: f64,
+    threads: i32,
 ) -> List {
     let run = || -> Core<List> {
         if names_of.len() != curves.len() {
@@ -1616,6 +1617,7 @@ fn compute_ctd_time_value(
             &correlation,
             size(paths, "paths")?,
             seed as u64,
+            thread_count(threads)?,
         )?;
         Ok(list!(
             intrinsic = r.intrinsic,

@@ -154,6 +154,7 @@ create_ctd_curve <- function(reference_date, end_date, curves, day_count = "actu
 #' @param volatility,mean_reversion One per curve after the first.
 #' @param correlation Correlation matrix of the spreads (`NULL` for one spread, or for independent spreads).
 #' @param paths,seed Number of paths and the seed.
+#' @param threads Worker threads; 0 means one per logical processor. The result does not depend on it.
 #' @return A tibble with `date`, `intrinsic` (the choice by today's forwards, as [create_ctd_curve()]), `value`,
 #'   `standard_error`, `time_value` (`intrinsic - value`, the poster's gain per unit paid at `date`), `first_order`,
 #'   `log_standard_error` and `first_order_formula` (`NA` unless there are two curves).
@@ -165,7 +166,7 @@ create_ctd_curve <- function(reference_date, end_date, curves, day_count = "actu
 #'                        volatility = 0.005, mean_reversion = 0.1, paths = 500L)
 #' @export
 compute_ctd_time_value <- function(reference_date, dates, curves, volatility, mean_reversion = 0, correlation = NULL,
-                                   paths = 2000L, seed = 1, day_count = "actual_365_fixed") {
+                                   paths = 2000L, seed = 1, day_count = "actual_365_fixed", threads = 0L) {
   if (!is.list(curves) || is.null(names(curves)) || any(names(curves) == "") ||
       !all(purrr::map_lgl(curves, \(c) inherits(c, "rmql_ois_curve")))) {
     stop("`curves` must be a named list of curves.", call. = FALSE)
@@ -176,7 +177,7 @@ compute_ctd_time_value <- function(reference_date, dates, curves, volatility, me
   if (is.null(correlation)) correlation <- diag(max(m, 0L))
   x <- checked(.Call(wrap__compute_ctd_time_value, as_serial(reference_date), as_serial(dates), day_count, names(curves),
                      purrr::map(curves, "pointer"), volatility, mean_reversion, as.numeric(t(as.matrix(correlation))),
-                     as.integer(paths), as.numeric(seed)))
+                     as.integer(paths), as.numeric(seed), as.integer(threads)))
   tibble(date = as.Date(dates), intrinsic = x$intrinsic, value = x$value, standard_error = x$standard_error,
          time_value = x$intrinsic - x$value, first_order = x$first_order, log_standard_error = x$log_standard_error,
          first_order_formula = x$first_order_formula)

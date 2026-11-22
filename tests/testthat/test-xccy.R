@@ -51,3 +51,15 @@ test_that("the time value of the collateral choice", {
   expect_gt(r$time_value[3], 4 * r$standard_error[3])
   expect_error(compute_ctd_time_value(today, dates, list(JPY = yen, USD = usd), volatility = c(0.1, 0.1)))
 })
+
+test_that("the time value of the collateral choice does not depend on the number of threads", {
+  today <- "2026-11-04"
+  yen <- create_zero_curve(as.Date(today) + c(0, 365, 3652), c(0.005, 0.005, 0.012), "actual_365_fixed")
+  usd <- create_zero_curve(as.Date(today) + c(0, 365, 3652), c(0.009, 0.009, 0.006), "actual_365_fixed")
+  dates <- as.Date(today) + c(365, 1826, 3652)
+  run <- function(threads) compute_ctd_time_value(today, dates, list(JPY = yen, USD = usd), volatility = 0.005, mean_reversion = 0.1,
+                                                  paths = 1500L, seed = 3, threads = threads)
+  one <- run(1L)
+  for (threads in c(2L, 4L, 0L)) expect_identical(run(threads), one, info = as.character(threads))
+  expect_error(run(-1L), "threads")
+})
