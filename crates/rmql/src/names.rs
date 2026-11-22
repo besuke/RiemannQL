@@ -8,6 +8,7 @@ use crate::instruments::PriceType;
 use crate::interest_rate::Compounding;
 use crate::ois::{create_estr_index, create_sofr_index, create_sonia_index, create_tonar_index, OisInterpolation, OvernightIndex};
 use crate::ois_swap::SwapSide;
+use crate::lookback::LookbackStrike;
 use crate::options::{BarrierType, Exercise, ForwardModel, OptionType};
 use crate::sabr::SabrVolatilityType;
 use crate::time::{
@@ -155,6 +156,14 @@ pub fn parse_option_type(name: &str) -> Result<OptionType, Error> {
         "call" => OptionType::Call,
         "put" => OptionType::Put,
         other => return unknown("option type", other),
+    })
+}
+
+pub fn parse_lookback_strike(name: &str) -> Result<LookbackStrike, Error> {
+    Ok(match name {
+        "floating" => LookbackStrike::Floating,
+        "fixed" => LookbackStrike::Fixed,
+        other => return unknown("lookback strike", other),
     })
 }
 

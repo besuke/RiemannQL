@@ -20,6 +20,7 @@ use rmql::hull_white::{
     SwaptionFlows,
 };
 use rmql::instruments::{FixedRateBond, FixedRateBondSpec};
+use rmql::lookback::{self, LookbackGreeks, LookbackInputs};
 use rmql::longstaff_schwartz::{
     self, CalibrationPaths, FewInTheMoney, LongstaffSchwartzSettings, PathSequence,
 };
@@ -2814,6 +2815,109 @@ fn compute_binomial_option_value(
         )
     })
 }
+fn lookback_greeks_list(n: usize, f: impl Fn(usize) -> Core<LookbackGreeks>) -> List {
+    let (columns, error) = table(n, |i| {
+        f(i).map(|g| [g.value, g.delta, g.gamma, g.vega, g.rho, g.dividend_rho, g.theta, g.strike_sensitivity, g.extremum_sensitivity])
+    });
+    list!(
+        value = columns[0].clone(),
+        delta = columns[1].clone(),
+        gamma = columns[2].clone(),
+        vega = columns[3].clone(),
+        rho = columns[4].clone(),
+        dividend_rho = columns[5].clone(),
+        theta = columns[6].clone(),
+        strike_sensitivity = columns[7].clone(),
+        extremum_sensitivity = columns[8].clone(),
+        error = error
+    )
+}
+/// The inputs of row `i`; a floating strike has no strike, and the spot stands in for it.
+fn lookback_inputs(i: usize, v: [&[f64]; 7]) -> LookbackInputs {
+    let [spot, extremum, strike, rate, dividend, volatility, time] = v;
+    LookbackInputs {
+        spot: spot[i],
+        running_extremum: extremum[i],
+        strike: if strike[i].is_nan() { spot[i] } else { strike[i] },
+        rate: rate[i],
+        dividend_yield: dividend[i],
+        volatility: volatility[i],
+        time: time[i],
+    }
+}
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn compute_lookback_option_value(
+    lookback_type: Vec<String>,
+    option_type: Vec<String>,
+    spot: Vec<f64>,
+    running_extremum: Vec<f64>,
+    strike: Vec<f64>,
+    rate: Vec<f64>,
+    dividend_yield: Vec<f64>,
+    volatility: Vec<f64>,
+    time: Vec<f64>,
+) -> List {
+    if let Err(e) = same_length(&[
+        ("lookback_type", lookback_type.len()),
+        ("option_type", option_type.len()),
+        ("spot", spot.len()),
+        ("running_extremum", running_extremum.len()),
+        ("strike", strike.len()),
+        ("rate", rate.len()),
+        ("dividend_yield", dividend_yield.len()),
+        ("volatility", volatility.len()),
+        ("time", time.len()),
+    ]) {
+        return failure(e);
+    }
+    lookback_greeks_list(spot.len(), |i| {
+        lookback::compute_lookback_greeks(
+            names::parse_lookback_strike(&lookback_type[i])?,
+            names::parse_option_type(&option_type[i])?,
+            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time]),
+        )
+    })
+}
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn compute_discrete_lookback_option_value(
+    lookback_type: Vec<String>,
+    option_type: Vec<String>,
+    spot: Vec<f64>,
+    running_extremum: Vec<f64>,
+    strike: Vec<f64>,
+    rate: Vec<f64>,
+    dividend_yield: Vec<f64>,
+    volatility: Vec<f64>,
+    time: Vec<f64>,
+    monitoring_times: Vec<f64>,
+    steps: Vec<i32>,
+) -> List {
+    if let Err(e) = same_length(&[
+        ("lookback_type", lookback_type.len()),
+        ("option_type", option_type.len()),
+        ("spot", spot.len()),
+        ("running_extremum", running_extremum.len()),
+        ("strike", strike.len()),
+        ("rate", rate.len()),
+        ("dividend_yield", dividend_yield.len()),
+        ("volatility", volatility.len()),
+        ("time", time.len()),
+        ("steps", steps.len()),
+    ]) {
+        return failure(e);
+    }
+    lookback_greeks_list(spot.len(), |i| {
+        lookback::compute_discrete_lookback_greeks(
+            names::parse_lookback_strike(&lookback_type[i])?,
+            names::parse_option_type(&option_type[i])?,
+            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time]),
+            &monitoring_times,
+            size(steps[i], "steps[i]")?,
+        )
+    })
+}
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn compute_american_approximation_value(
@@ -4650,6 +4754,8 @@ extendr_module! {
     fn compute_european_option_value;
     fn compute_barrier_option_value;
     fn compute_binomial_option_value;
+    fn compute_lookback_option_value;
+    fn compute_discrete_lookback_option_value;
     fn compute_american_approximation_value;
     fn compute_forward_option_value;
     fn compute_implied_volatility;

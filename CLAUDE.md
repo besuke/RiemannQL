@@ -89,6 +89,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | 金利・通貨の拡張 | `spec_rates_fx_extension.md` |
 | P12〜P15 ポートフォリオ／市場VaR／信用VaR／トランシェ | `spec_portfolio.md`、`spec_market_risk.md`、`spec_credit_risk.md`、`spec_tranching.md` |
 | TRS・IRRBB（Infrago Quant 用） | `spec_trs.md`、`spec_irrbb.md` |
+| P16 ルックバック・転換社債・MSCB（Stage 1 のルックバックだけ実装。2〜4 は設計案） | `spec_lookback_convertible.md` |
 
 ## 決定事項
 
