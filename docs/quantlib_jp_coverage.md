@@ -4,7 +4,7 @@
 
 - **区分**：本書の照合記述はすべて **【ソース確認】**（2026-11-21 に Rust 中核・R 公開関数・サンプルスクリプトのソースを読んで確認）。
 - **未実施の範囲**：更新履歴からリンクされる各章本文の確認、R での再実行、および本記録作成時の `cargo test` 再実行は行っていない。
-- **関連文書**：英語版 QuantLib Guide と公式 Examples の棚卸しは `docs/quantlib_guide_inventory.md`、Coral Book との照合範囲は `docs/lagrangefinance_coverage.md` にある。
+- **関連文書**：英語版 QuantLib Guide と公式 Examples の棚卸しは `docs/quantlib_guide_inventory.md`、Coral-Book との照合範囲は `docs/lagrangefinance_coverage.md` にある。
 
 ---
 

@@ -10,17 +10,17 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 | フォルダー | 内容 | GitHub | 扱い |
 |---|---|---|---|
-| `Carmine` | Carmine Studio『エンタープライズ金融モデル』（旧 LagrangeFinLab）。React＋R サーバー（httpuv）。画面 8081、R API 8787 | besuke/Carmine | **クライアント** |
+| `Carmine-Studio` | Carmine-Studio『エンタープライズ金融モデル』（旧 LagrangeFinLab）。React＋R サーバー（httpuv）。画面 8081、R API 8787 | besuke/Carmine-Studio | **クライアント** |
 | `InfragoQuant` | Infrago Quant（旧 QuantLet）。Curie の後継の業務 Web アプリ。画面 8091、R API 8790 | besuke/infrago（旧 infrago-quant。公開か非公開かは `InfragoQuant/HANDOVER.md` を見る） | **クライアント** |
 | `Crimson` | Crimson Proof『Leanから見た金融数学』（旧 LagrangeAcademy）。Quarto＋Lean 4。R は `R/utility_LAD.R` だけから呼ぶ | besuke/Crimson（公開） | **クライアント**。QuantLib を一切使わない・言及しない |
-| `coral-book` | Coral Book『金融工学の応用基礎』（旧 LagrangeFinance）。照合の基準 | besuke/coral-book | **変更しない** |
+| `coral-book` | Coral-Book『金融工学の応用基礎』（旧 LagrangeFinance）。照合の基準 | besuke/coral-book | **変更しない** |
 | `GaussQuant`、`Curie` | 既存の R の計算・業務ツール。照合の基準 | besuke/GaussQuant ほか | **変更しない** |
 | `QuantLib_tidy`、`LeanStudy`、`TypeScriptStudy` | 学習・試作 | | |
 
 - クライアントを扱う前に、そのリポジトリの `CLAUDE.md` を読む（自動では読まれない）。
 - **クライアントが rmql を入れる・更新する・呼ぶ方法は `docs/client_guide.md`**。クライアントの `CLAUDE.md` や README からここを指す。
 - 別の会話が同じリポジトリで作業中のことがある。未コミットの変更があるリポジトリの共有ファイルは、頼まれない限り編集しない（2026-11-18、Infrago Quant に 34 件の未コミットの変更があった）。
-- rmql を入れ直す前に、その DLL を使っている R API（Infrago Quant、Carmine Studio）を止める。
+- rmql を入れ直す前に、その DLL を使っている R API（Infrago Quant、Carmine-Studio）を止める。
 
 ### 引継ぎの所在（入口はこの表。正本は各リポジトリに 1 つだけ）
 
@@ -31,7 +31,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | rmql（計算サーバー）と全体 | このファイルの「状態と引継ぎ」 | |
 | Infrago Quant | `../InfragoQuant/HANDOVER.md` | 状態・未了・新しい PC での準備はすべてここ。`CLAUDE.md` と README は指すだけ。ブランチ `rename-infrago-quant-and-analytics`（PR #1）が未マージで、別の会話の未コミットの変更がある |
 | Crimson Proof | `../Crimson/CLAUDE.md` の「現在の状態と次の作業（引継ぎ）」 | **古い（2026-11-10）**。章の進み具合は、旧名 LagrangeAcademy の会話の記憶（`~/.claude/projects/C--AnalyticFin-Projects-LagrangeAcademy/memory/project-book-status.md`、2026-11-14）と食い違う。Crimson Proof の会話で、リポジトリの状態（`git log`、`_quarto.yml`）を確かめてから、`CLAUDE.md` の節を書き直す |
-| Carmine Studio | `../Carmine/README.md` と `reconciliation/RECONCILIATION.md` | 専用の引継ぎ節はない。rmql への要望は上の「要望と未対応」の表 |
+| Carmine-Studio | `../Carmine-Studio/README.md` と `reconciliation/RECONCILIATION.md` | 専用の引継ぎ節はない。rmql への要望は上の「要望と未対応」の表 |
 
 **デスクトップの起動用ファイル**（`C:\Users\besuk\OneDrive\デスクトップ`）：`rmql-Claude.bat`（旧パス固定の複製。リポジトリのものを使う）、`InfragoClaude.bat`、`CrimsonProof.bat`、`resume_claude_CarmineStudio.bat`、`CoralBook_Rontgen.bat`。各プロジェクトの会話を開くものなので、残す。rmql から全体を扱う方針（この会話）では、`rmql-Claude.bat` だけで足りる。
 
@@ -39,7 +39,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 **使っている関数**（`rmql::` の呼び出し）：
 
-- Carmine Studio は 73 関数を使う。カーブ・債券・日本式利回り・OIS・ASW・国債先物・CDS・オプション・Hull-White・SABR・LMM・LS・MBS・PRDC・バッチと、ほぼ全域にわたる。
+- Carmine-Studio は 73 関数を使う。カーブ・債券・日本式利回り・OIS・ASW・国債先物・CDS・オプション・Hull-White・SABR・LMM・LS・MBS・PRDC・バッチと、ほぼ全域にわたる。
 - Infrago Quant は 50 関数を使う。債券・日本式利回り・OIS・ASW・CDS・TRS・IRRBB。
 - Crimson Proof は 7 関数を使う。オプション、PRDC、FX スマイル。
 - 3 つとも、呼んでいる関数はすべて現在の公開関数にある（呼び出しの切れはない）。
@@ -49,11 +49,11 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 | クライアント | 要望 | 出典 | rmql の状態 |
 |---|---|---|---|
-| Infrago Quant・Carmine Studio | コール債の行使判断（コール日ごとの継続価値・コール価格・行使の有無、境界） | Carmine `server/R/callable_model.R`（原稿の独自の R 関数で求めていた） | **対応済み（2026-11-19）。0.4.0 で公開済み**：`compute_hull_white_callable_bond_decisions()`。Coral Book II-8.4.2 の `decisions` と 5 ケース 10,918 行で照合（`docs/spec_hull_white.md` 1.2 節）。両クライアントは使用済み |
-| Carmine Studio | OIS スワップを期間（`7Y`）で作る（`MakeOIS` の規則） | `reconciliation/RECONCILIATION.md` 6 章 #1 | **対応済み（2026-11-18）。0.4.0 で公開済み**：`compute_ois_swap_dates()`。クライアント側の置き換えは未了（「まず読む」） |
-| Carmine Studio | 照合に使った rmql のコミットを固定する | 同 #5 | 0.3.2 は Releases の zip と `RemoteSha` で固定できるようになった。クライアント側の記録は未更新 |
-| Carmine Studio | ブラウザーで直接動かす（WebAssembly 版） | 同 #6 | L1〜L3 は未着手 |
-| Carmine Studio | 元本リセット型 CCS、FX スワップによる受渡日の調整、CCS の期間構造の校正 | `README.md` の円換算 ASW の「未対応」 | 一部の部品（`create_xccy_instruments` の `resetting`、`bootstrap_xccy_curve`）はある。クライアントから使える形かは未確認 |
+| Infrago Quant・Carmine-Studio | コール債の行使判断（コール日ごとの継続価値・コール価格・行使の有無、境界） | Carmine-Studio `server/R/callable_model.R`（原稿の独自の R 関数で求めていた） | **対応済み（2026-11-19）。0.4.0 で公開済み**：`compute_hull_white_callable_bond_decisions()`。Coral-Book II-8.4.2 の `decisions` と 5 ケース 10,918 行で照合（`docs/spec_hull_white.md` 1.2 節）。両クライアントは使用済み |
+| Carmine-Studio | OIS スワップを期間（`7Y`）で作る（`MakeOIS` の規則） | `reconciliation/RECONCILIATION.md` 6 章 #1 | **対応済み（2026-11-18）。0.4.0 で公開済み**：`compute_ois_swap_dates()`。クライアント側の置き換えは未了（「まず読む」） |
+| Carmine-Studio | 照合に使った rmql のコミットを固定する | 同 #5 | 0.3.2 は Releases の zip と `RemoteSha` で固定できるようになった。クライアント側の記録は未更新 |
+| Carmine-Studio | ブラウザーで直接動かす（WebAssembly 版） | 同 #6 | L1〜L3 は未着手 |
+| Carmine-Studio | 元本リセット型 CCS、FX スワップによる受渡日の調整、CCS の期間構造の校正 | `README.md` の円換算 ASW の「未対応」 | 一部の部品（`create_xccy_instruments` の `resetting`、`bootstrap_xccy_curve`）はある。クライアントから使える形かは未確認 |
 | Infrago Quant | 他の PC で動かすための TRS・IRRBB の公開 | `CLAUDE.md` の状態（2026-11-16） | 解消。`main` に入り、0.3.2 の zip に含まれる |
 | Crimson Proof | 描画時に Rust をビルドしない（導入済みのパッケージを使う） | `CLAUDE.md` | 0.3.2 の zip で満たせる |
 
@@ -70,7 +70,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 ## 文書の索引（`docs/`）
 
 - 全体：`specification.md`（原則 R1〜R16、7 章の開発段階、5.1 の許容誤差）、`naming_migration.md`（旧名と新名）、`client_guide.md`（クライアントの入れ方・呼び方）、`design_distributed.md`（分散計算・GPU の構想）、`library_comparison.md`（QuantLib と finmath-lib の比較）
-- 照合の範囲：`lagrangefinance_coverage.md`（Coral Book の計算の網羅状況）、`quantlib_guide_inventory.md`（QuantLib Guide と公式 Examples の棚卸し）、`quantlib_jp_coverage.md`（日本語の QuantLib 解説サイトの更新履歴 46 項目との照合。2026-11-21、ソース確認のみ）
+- 照合の範囲：`lagrangefinance_coverage.md`（Coral-Book の計算の網羅状況）、`quantlib_guide_inventory.md`（QuantLib Guide と公式 Examples の棚卸し）、`quantlib_jp_coverage.md`（日本語の QuantLib 解説サイトの更新履歴 46 項目との照合。2026-11-21、ソース確認のみ）
 - 段階ごとの仕様と照合結果：
 
 | 段階 | 文書 |
@@ -95,7 +95,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 - **設計の主題**：オブジェクト指向とテンプレートからの脱却。値と純粋関数、enum と match。継承・オブザーバー・グローバル状態（評価日など）は使わない。利用者が選ぶものは実行時の値。総称型は内部（自動微分など）に留めて公開 API に出さない。`#![forbid(unsafe_code)]`。
 - **対応言語**：R と TypeScript が主。C ABI は不要。Python は必要になってから。言語間の一致は計算ごとの許容誤差で確かめ、ネイティブと WebAssembly は分けて扱う。
-- **開発の目的**：自分の研究と分析の基盤。Coral Book（旧 LagrangeFinance）の第 II 部と第 III 部、第 I 部の I-8〜I-11（ポートフォリオ最適化、市場VaR、信用VaR、トランチング。2026-11-14 の指示）に相当する計算を備える。I-1〜I-7 は R の統計関数で足りるので対象外。対象は、市場価格の再現、解析解、無裁定の関係、最適性条件で検証できる計算（仕様書 1.2 節）。自動微分は torch ではなく自前。
+- **開発の目的**：自分の研究と分析の基盤。Coral-Book（旧 LagrangeFinance）の第 II 部と第 III 部、第 I 部の I-8〜I-11（ポートフォリオ最適化、市場VaR、信用VaR、トランチング。2026-11-14 の指示）に相当する計算を備える。I-1〜I-7 は R の統計関数で足りるので対象外。対象は、市場価格の再現、解析解、無裁定の関係、最適性条件で検証できる計算（仕様書 1.2 節）。自動微分は torch ではなく自前。
 - **照合の正**：QuantLib R バインディング 1.42。仕様を読むソースは `70f240f`（1.45-dev）だが、計算が変わっている部分は v1.42（`41b0e146`）に合わせる。P3 とカレンダーは QuantLib C++ v1.42（R パッケージとの照合は「正確な C++ コミットが不明な Version 1.42 との照合」と区別して記録）。QuantLib の既定を市場の規約として扱わない。
 - **日付・カレンダー・規約**：QuantLib に従う。日本のカレンダーは「QuantLib 互換の実装」であり、祝日法の説明とは区別する。新興国カレンダーは当面、債券の受渡日と利払日の判定だけに使う。OIS は TONAR・€STR・SOFR・SONIA の 4 指標に限る。
 - **日本式債券計算**：`docs/spec_bonds.md` 5.1 節の規則で、GaussQuant の `R/bond_yen_GQL.R`（`4ff081c`）と照合する。計算規則を直接説明し、VBA を根拠にしない（「VBA 互換」と書かない）。二次情報の「市場慣行」だけで規則を変えない。2 月 29 日の応当日が平年なら 2 月 28 日とし、その期間を 1 年とする。この規則は日本式債券計算だけのもの。
@@ -112,24 +112,24 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 ## 作業のきまり
 
 - 文書の記述は【ソース確認】【実行照合済み】【設計案】を分ける。エラーの一致は、件数だけでなく原因も確かめる。
-- GaussQuant・Coral Book・Curie は、rmql の作業では変更しない。
+- GaussQuant・Coral-Book・Curie は、rmql の作業では変更しない。
 - 段階ごとの手順：照合用 R スクリプト → Rust の実装 → 照合テスト → 仕様書と `THIRD_PARTY_NOTICES` の更新 → 全テストと clippy → 報告。
 - 機能の拡充は、段階ごとにテストと clippy が通ったら確認なしで commit と push をしてよい（2026-11-01 の指示）。それ以外のコミットと push は頼まれたときだけ。
 - 回帰テストの許容誤差は変えない。
-- 新しい項目は、Coral Book の入力・規約・計算方法と QuantLib C++ の該当実装を読んでから着手し、Rust 中核、R 公開 API、ヘルプと使用例、比較資料への追加までを一組にする（2026-11-03 の指示）。
+- 新しい項目は、Coral-Book の入力・規約・計算方法と QuantLib C++ の該当実装を読んでから着手し、Rust 中核、R 公開 API、ヘルプと使用例、比較資料への追加までを一組にする（2026-11-03 の指示）。
 
 ## 状態と引継ぎ（2026-11-18）
 
 ### まず読む：いまの作業と次の一手
 
-**作業中：OIS スワップをテナー（`7Y` など）から作る機能**（Carmine Studio の要望）。**引継ぎはこのファイルだけに書く**（仕様書の `docs/spec_ois_swap.md` 7 章は仕様と照合結果だけ）。
+**作業中：OIS スワップをテナー（`7Y` など）から作る機能**（Carmine-Studio の要望）。**引継ぎはこのファイルだけに書く**（仕様書の `docs/spec_ois_swap.md` 7 章は仕様と照合結果だけ）。
 
 | 層 | 状態 |
 |---|---|
 | Rust の中核 `rmql::ois::compute_ois_swap_dates` | **完了**。QuantLib 1.42 `MakeOIS` と 13,520 件で照合し、成功 13,514 件は完全一致、失敗 6 件も同じ（`docs/spec_ois_swap.md` 7 章）。コミット済み（`d8c5ba7`） |
 | R の関数 `compute_ois_swap_dates(index, evaluation_date, tenor, settlement_days = 2L, on_error)` | **実装とテストは完了、コミット済み（2026-11-18）**。ラッパーは `src/rust/src/lib.rs`、R 関数は `R/ois_swaps.R`、ヘルプは `man/compute_ois_swap_dates.Rd`、テストは `tests/testthat/test-ois-swap-dates.R`。R のテスト全体は 156 件成功、Rust は 278 件成功、`cargo clippy --all-targets` は通る |
-| Carmine Studio の置き換え | **未了**。`../Carmine/server/R/tona_ois_model.R` の `TONA_SWAP_DATES` を `compute_ois_swap_dates("tonar", evaluation_date, "7Y")` に置き換える。結果は同じ日付（開始 2026-09-14、満期 2033-09-14）のはず。置き換えたら `reconciliation/RECONCILIATION.md` 6 章 #1 を「解消」に更新する（クライアントの会話で、頼まれたときだけコミット） |
-| 版と公開 | **0.4.0 は公開済み（2026-11-20）**。リポジトリの `DESCRIPTION` と Cargo は 0.4.1（2026-11-21 に揃えた）で、0.4.1 の公開は未確認。Carmine Studio が `stopifnot(packageVersion("rmql") >= "0.4.0")` を足したかは未確認 |
+| Carmine-Studio の置き換え | **未了**。`../Carmine-Studio/server/R/tona_ois_model.R` の `TONA_SWAP_DATES` を `compute_ois_swap_dates("tonar", evaluation_date, "7Y")` に置き換える。結果は同じ日付（開始 2026-09-14、満期 2033-09-14）のはず。置き換えたら `reconciliation/RECONCILIATION.md` 6 章 #1 を「解消」に更新する（クライアントの会話で、頼まれたときだけコミット） |
+| 版と公開 | **0.4.0 は公開済み（2026-11-20）**。リポジトリの `DESCRIPTION` と Cargo は 0.4.1（2026-11-21 に揃えた）で、0.4.1 の公開は未確認。Carmine-Studio が `stopifnot(packageVersion("rmql") >= "0.4.0")` を足したかは未確認 |
 
 **注意**：
 
@@ -141,7 +141,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 検討したが採用しなかった案：ビルド済みの静的ライブラリー `librmql_r.a`（約 35 MB）を Releases に置き、`configure.win` が `RemoteSha` と SHA-256 の一致を確かめて取得して cargo を飛ばす案。リンクのために Rtools は要るままで、タグごとの添付も要るので、(b) で足りるとしてやめた。必要になったら、版・コミット・SHA-256 が一致するときだけ使い、不一致なら cargo にもどす形にする。
 
-**決定（2026-11-19、ユーザー）：名前を改めた。** R パッケージ名・crate 名は `rmql`（Rust Mathematical Quantitative Library。`rmql`、`rmql-r`）、GitHub のリポジトリ名は `RiemannQL`（`besuke/RiemannQL`。公開 URL は https://besuke.github.io/RiemannQL/）。理由：「リーマン」がリーマン・ブラザーズを連想させ、金融では縁起が悪いかもしれないため。関数名は変えていない。旧名の互換パッケージは作っていない。**済み**：コードと文書の名前（2026-11-19、ブランチ `rename-to-rmql` から `main` へ。テスト・clippy 合格）、GitHub のリポジトリの改名（`origin` も更新）。**未了**：なし。フォルダーは `C:\AnalyticFin\Projects\RiemannQL`（GitHub のリポジトリ名に合わせた。2026-11-20）に改め、`main` を push した。この PC の既定の R ライブラリーへの `rmql` 0.4.0 の導入は別（別ライブラリー `C:/rfmdev` にある）。クライアントの `carmine-studio`・`crimson-proof` は、フォルダーも GitHub のリポジトリも `Carmine`・`Crimson` に改めた（2026-11-20。製品名の Carmine Studio・Crimson Proof は変えない）。公開済み：`rmql` 0.4.0 を GitHub Actions（`.github/workflows/build-r-repository.yml`）で、Windows の R 4.4・4.5・4.6 のバイナリとソースにして gh-pages に公開した（2026-11-20）。Coral Book と GaussQuant は変更しない（Coral Book のフォルダー名 `part2_quantive_riemann` などはそのまま）。
+**決定（2026-11-19、ユーザー）：名前を改めた。** R パッケージ名・crate 名は `rmql`（Rust Mathematical Quantitative Library。`rmql`、`rmql-r`）、GitHub のリポジトリ名は `RiemannQL`（`besuke/RiemannQL`。公開 URL は https://besuke.github.io/RiemannQL/）。理由：「リーマン」がリーマン・ブラザーズを連想させ、金融では縁起が悪いかもしれないため。関数名は変えていない。旧名の互換パッケージは作っていない。**済み**：コードと文書の名前（2026-11-19、ブランチ `rename-to-rmql` から `main` へ。テスト・clippy 合格）、GitHub のリポジトリの改名（`origin` も更新）。**未了**：なし。フォルダーは `C:\AnalyticFin\Projects\RiemannQL`（GitHub のリポジトリ名に合わせた。2026-11-20）に改め、`main` を push した。この PC の既定の R ライブラリーへの `rmql` 0.4.0 の導入は別（別ライブラリー `C:/rfmdev` にある）。クライアントの `carmine-studio`・`crimson-proof` は、フォルダーも GitHub のリポジトリも `Carmine`・`Crimson` に改めた（2026-11-20）。その後、Carmine は 2026-11-22 に、フォルダー、GitHub のリポジトリ（`besuke/Carmine-Studio`）、文書と画面の表示名を `Carmine-Studio` に戻した（Coral-Book の表示名は `Coral-Book`。Crimson Proof は変えない）。公開済み：`rmql` 0.4.0 を GitHub Actions（`.github/workflows/build-r-repository.yml`）で、Windows の R 4.4・4.5・4.6 のバイナリとソースにして gh-pages に公開した（2026-11-20）。Coral-Book と GaussQuant は変更しない（Coral-Book のフォルダー名 `part2_quantive_riemann` などはそのまま）。
 
 ### 完了したもの
 
@@ -149,7 +149,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 - P1〜P15、P11-1〜P11-6、TRS、IRRBB は実装と照合が済んでいる。
 - 残っている主なもの：
-  - P3：±8% で振れる入力の 3 カーブが、入力気配の再現基準に届かない（`spec_ois.md` 10.3 節）。GaussQuant・Coral Book との照合（仕様書 7 章）は未実施。
+  - P3：±8% で振れる入力の 3 カーブが、入力気配の再現基準に届かない（`spec_ois.md` 10.3 節）。GaussQuant・Coral-Book との照合（仕様書 7 章）は未実施。
   - P9：LMM 全体は未実装（P11-6 は Caplet と相関の例の再現だけ）。
   - P10：スマイルの下での経路依存の条項、相関の推定、FX と金利の同時校正は未対応（`spec_prdc.md`）。
   - P14：DRC は関係を整理しただけで、基準本文の確認と実装は未了。
@@ -189,17 +189,17 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 2. 準備：R 4.6、Rtools 4.5、Rust（`rustup target add x86_64-pc-windows-gnu`）、Claude Code。R パッケージだけ使うなら、上の `install.packages(...)` の 1 行で足りる。
 3. 起動：`rmql-Claude.bat`（または `rmql-Claude.ps1`）を実行する。この PC に会話の履歴があれば続きから、なければ新しい会話で始まる。新しい会話では、**このファイル（CLAUDE.md）の「まず読む」から続ける**。
 4. 会話の履歴と記憶は PC ごとにあり、git には入らない。引継ぎはこのファイルが担う。作業を切るときは、ここを更新してコミットする。
-5. クライアント（`../Carmine`、`../InfragoQuant`、`../Crimson`）と参照元（`../coral-book`、`../GaussQuant`）は、同じ親フォルダーに clone する。
+5. クライアント（`../Carmine-Studio`、`../InfragoQuant`、`../Crimson`）と参照元（`../coral-book`、`../GaussQuant`）は、同じ親フォルダーに clone する。
 
 ## QuantLib との比較資料（`comparison/`）
 
-Coral Book の入力と計算例で、rmql を基準と比べる英語の資料（文書に日本語を入れない）。
+Coral-Book の入力と計算例で、rmql を基準と比べる英語の資料（文書に日本語を入れない）。
 
-- **基準**：カレンダーは QuantLib C++ v1.42（`tests/golden/calendar_all_*.csv`）、それ以外は Coral Book の計算結果（`comparison/baseline/lagrange_values.csv`、作り直しは `comparison/baseline/README.md`）。QuantLib R パッケージなどを直接呼ぶ行は参考（REF）で判定しない。同じ計算でないものは N/C。
+- **基準**：カレンダーは QuantLib C++ v1.42（`tests/golden/calendar_all_*.csv`）、それ以外は Coral-Book の計算結果（`comparison/baseline/lagrange_values.csv`、作り直しは `comparison/baseline/README.md`）。QuantLib R パッケージなどを直接呼ぶ行は参考（REF）で判定しない。同じ計算でないものは N/C。
 - **判定**：絶対誤差 1e-4、表示は小数 4 桁、判定は丸める前、単位を明記。この資料だけの基準。
 - **出力**：`comparison/` で `quarto render --to html` → `_book/index.html`（git に入れない）。丸める前の結果は `comparison/results/*.csv`（git に入れる）。成功の判定には、「Windows の環境」の quarto の 2 条件に加えて、結果の CSV が 14 章分あることを確かめる。リークチェックは描画とは別に実行して報告する。章だけを確かめるときは `Rscript R/check_chapter.R <章>`。
 - **最後の結果**（2026-11-02、`6a5d9d7`）：PASS 386、FAIL 0、N/C 40、REF 402。未比較は `chapters/appendix_c_gaps.qmd`。
-- **市場データ**：2026-10-06 の OIS 気配と受渡適格銘柄の価格は、描画時に Coral Book から読むだけで、保存も表示もしない。
+- **市場データ**：2026-10-06 の OIS 気配と受渡適格銘柄の価格は、描画時に Coral-Book から読むだけで、保存も表示もしない。
 
 ## Windows の環境（全リポジトリ共通）
 

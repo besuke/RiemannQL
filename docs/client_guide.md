@@ -1,6 +1,6 @@
 # クライアント向けの手引き：rmql の入れ方と使い方
 
-対象：rmql（計算サーバー）を呼ぶクライアント（Carmine Studio、Infrago Quant、Crimson Proof、今後のもの）。クライアントは金融計算を自分で書かず、R から `rmql` を呼ぶ。2026-11-18 作成。入れ方の確認記録は `docs/spec_r.md` 8.7 節。
+対象：rmql（計算サーバー）を呼ぶクライアント（Carmine-Studio、Infrago Quant、Crimson Proof、今後のもの）。クライアントは金融計算を自分で書かず、R から `rmql` を呼ぶ。2026-11-18 作成。入れ方の確認記録は `docs/spec_r.md` 8.7 節。
 
 ## 1. 入れる（Windows、R 4.4・4.5・4.6）：Rust も Rtools も不要
 
@@ -28,7 +28,7 @@ install.packages(
 
 ## 2. 入れ替える（版を上げる）
 
-1. **その DLL を使っている R のプロセスを先に止める**。Infrago Quant の R API（8790）、Carmine Studio の R API（8787）、Positron や RStudio の R セッション。止めないと `cannot remove earlier installation, is it in use?` で失敗する。他の人のセッションは、こちらから終了させない。
+1. **その DLL を使っている R のプロセスを先に止める**。Infrago Quant の R API（8790）、Carmine-Studio の R API（8787）、Positron や RStudio の R セッション。止めないと `cannot remove earlier installation, is it in use?` で失敗する。他の人のセッションは、こちらから終了させない。
 2. 上の `install.packages(...)` をもう一度実行する。
 3. 版を確かめる：`packageVersion("rmql")`。
 
@@ -58,7 +58,7 @@ stopifnot(packageVersion("rmql") >= "0.4.0")
 
 ## 5. 足りない機能を頼む
 
-1. 足りない計算、入力、期待する値（照合の基準：Coral Book、独立な計算、QuantLib のどれか）を、rmql の会話（デスクトップの `rmql-Claude.bat`）に伝える。
+1. 足りない計算、入力、期待する値（照合の基準：Coral-Book、独立な計算、QuantLib のどれか）を、rmql の会話（デスクトップの `rmql-Claude.bat`）に伝える。
 2. rmql 側で、照合 → 実装 → テスト → 仕様書 → 配布の順に作る（`CLAUDE.md` の「作業のきまり」）。
 3. 新しい版を `gh-pages` に公開したら、クライアントは「2. 入れ替える」で更新し、必要な版を「3.」の `stopifnot` に書く。
 
@@ -66,5 +66,5 @@ stopifnot(packageVersion("rmql") >= "0.4.0")
 
 ## 6. 公開関数を変えるときの約束（rmql 側）
 
-- 公開関数の名前と引数を、クライアントに知らせずに変えない。変える前に、3 つのクライアントの `rmql::` の呼び出しを grep で確かめる（2026-11-18 時点：Carmine Studio 73 関数、Infrago Quant 50 関数、Crimson Proof 7 関数。いずれも現在の公開関数にある）。
+- 公開関数の名前と引数を、クライアントに知らせずに変えない。変える前に、3 つのクライアントの `rmql::` の呼び出しを grep で確かめる（2026-11-18 時点：Carmine-Studio 73 関数、Infrago Quant 50 関数、Crimson Proof 7 関数。いずれも現在の公開関数にある）。
 - 変えたときは `docs/naming_migration.md` に旧名と新名を書き、版を上げる。
