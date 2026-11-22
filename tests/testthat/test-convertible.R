@@ -49,3 +49,36 @@ test_that("inputs are checked, and on_error = na keeps the other rows", {
   expect_false(is.na(r$value[1]))
   expect_true(is.na(r$value[2]) && nzchar(r$error[2]))
 })
+
+test_that("a reset conversion price with equal limits is a fixed ratio", {
+  # lower = upper = 95 for a face of 100: a conversion ratio of 100 / 95, whatever the price ratio
+  fixed <- compute_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), 100 / 95, 92, 0.03, 0.01, 0.3, 0.02, 250L)
+  for (alpha in c(0.5, 0.9, 1.3)) {
+    mscb <- compute_reset_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), alpha, 95, 95, 92, 0.03, 0.01, 0.3, 0.02, 250L)
+    expect_equal(mscb$value, fixed$value, tolerance = 1e-10)
+  }
+})
+
+test_that("a European reset without coupons or spread has a closed form, and an American one converts at once above lower / ratio", {
+  zero_coupon <- create_fixed_rate_bond(0L, 100, "2026-11-02", "2028-11-02", "1Y", "japan", "unadjusted", "unadjusted", "backward", FALSE, 0,
+                                        "actual_365_fixed", "unadjusted", 100)
+  # F e^{-rT} + F [call(lower) / lower - call(lower / ratio) / lower + call(upper / ratio) / upper], T = 730 / 365
+  call <- function(strike) compute_european_option_value("call", 100, strike, 0.03, 0.01, 0.25, 2)$value
+  alpha <- 0.9; lower <- 80; upper <- 140
+  expected <- 100 * exp(-0.03 * 2) + 100 * (call(lower) / lower - call(lower / alpha) / lower + call(upper / alpha) / upper)
+  v <- compute_reset_convertible_bond_value(zero_coupon, "2026-11-02", "european", "2028-11-02", alpha, lower, upper, 100, 0.03, 0.01, 0.25, 0, 1500L)
+  expect_equal(v$value, expected, tolerance = 5e-3)
+  # the price ratio below 1: above lower / ratio = 88.9 the holder can convert for 100 / 0.9 = 111.1 at once
+  a <- compute_reset_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), 0.9, 80, Inf, c(95, 150),
+                                            0.03, 0.01, 0.25, 0.02, 200L)
+  expect_true(all(a$value >= 100 / 0.9 - 1e-9))
+})
+
+test_that("a reset conversion price is checked", {
+  args <- list(bond(), "2026-11-02", "european", "2031-11-02", 0.9, 80, 140, 100, 0.03, 0.01, 0.25, 0.02, 100L)
+  expect_no_error(do.call(compute_reset_convertible_bond_value, args))
+  expect_error(do.call(compute_reset_convertible_bond_value, replace(args, 7, 70)), "upper conversion price")
+  expect_error(do.call(compute_reset_convertible_bond_value, replace(args, 5, 0)), "positive")
+  soft <- data.frame(date = as.Date("2029-11-02"), kind = "call", price = 105, trigger = 1.3)
+  expect_error(compute_reset_convertible_bond_value(bond(), "2026-11-02", "european", "2031-11-02", 0.9, 80, 140, 100, 0.03, 0.01, 0.25, 0.02, 100L, soft), "soft call")
+})

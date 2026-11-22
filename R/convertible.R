@@ -54,6 +54,24 @@
 #' @export
 compute_convertible_bond_value <- function(bond, settlement_date, exercise, exercise_dates, conversion_ratio, spot, rate, dividend_yield, volatility,
                                            credit_spread, steps = 200L, callabilities = NULL, day_count = "actual_365_fixed", on_error = "stop") {
+  convertible_table(bond, settlement_date, exercise, exercise_dates, FALSE, as.numeric(conversion_ratio), 1, 1, 1, spot, rate,
+                    dividend_yield, volatility, credit_spread, steps, callabilities, day_count, on_error)
+}
+
+#' @rdname compute_convertible_bond_value
+#' @param conversion_price_ratio For `compute_reset_convertible_bond_value()`: the conversion price is reset at conversion to this
+#'   fraction of the share price at the same time, for example `0.9`.
+#' @param lower_conversion_price,upper_conversion_price The reset price stays between them; the upper one can be `Inf`.
+#' @export
+compute_reset_convertible_bond_value <- function(bond, settlement_date, exercise, exercise_dates, conversion_price_ratio, lower_conversion_price,
+                                                 upper_conversion_price = Inf, spot, rate, dividend_yield, volatility, credit_spread,
+                                                 steps = 200L, callabilities = NULL, day_count = "actual_365_fixed", on_error = "stop") {
+  convertible_table(bond, settlement_date, exercise, exercise_dates, TRUE, 1, as.numeric(conversion_price_ratio), as.numeric(lower_conversion_price),
+                    as.numeric(upper_conversion_price), spot, rate, dividend_yield, volatility, credit_spread, steps, callabilities, day_count, on_error)
+}
+
+convertible_table <- function(bond, settlement_date, exercise, exercise_dates, reset, conversion_ratio, alpha, lower, upper, spot, rate, dividend_yield,
+                              volatility, credit_spread, steps, callabilities, day_count, on_error) {
   if (!inherits(bond, "rmql_bond")) stop("`bond` must come from create_fixed_rate_bond().", call. = FALSE)
   calls <- callabilities
   if (is.null(calls)) {
@@ -65,7 +83,7 @@ compute_convertible_bond_value <- function(bond, settlement_date, exercise, exer
   }
   i <- tibble(spot = as.numeric(spot), rate = as.numeric(rate), dividend_yield = as.numeric(dividend_yield), volatility = as.numeric(volatility),
               credit_spread = as.numeric(credit_spread), steps = as.integer(steps))
-  rows <- checked(.Call(wrap__compute_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count), as.numeric(conversion_ratio),
+  rows <- checked(.Call(wrap__compute_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count), reset, conversion_ratio, alpha, lower, upper,
                 as.character(exercise), as_serial(exercise_dates), as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price),
                 as.character(calls$price_type), as.numeric(calls$trigger), i$spot, i$rate, i$dividend_yield, i$volatility, i$credit_spread, i$steps))
   rows <- finish_rows(rows, on_error)

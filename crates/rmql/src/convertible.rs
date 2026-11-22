@@ -35,19 +35,37 @@ use crate::Error;
 pub enum ConversionTerms {
     /// `ratio` shares for the bond.
     Fixed { ratio: f64 },
+    /// The conversion price is reset at conversion, by the share price at the same time (a bond with a downward
+    /// adjustment clause, MSCB): `K(S) = min(k_max, max(k_min, alpha S))`, and `face / K(S)` shares are received, worth
+    /// `face S / K(S) = face max(S / k_max, min(S / k_min, 1 / alpha))`. `k_max` may be infinite. No conversion price
+    /// is carried from one date to the next: that is stage 4 of `docs/spec_lookback_convertible.md`.
+    Reset {
+        face: f64,
+        alpha: f64,
+        k_min: f64,
+        k_max: f64,
+    },
 }
 
 impl ConversionTerms {
     fn value<T: Operand>(&self, spot: T) -> T {
         match *self {
             ConversionTerms::Fixed { ratio } => spot * ratio,
+            ConversionTerms::Reset {
+                face,
+                alpha,
+                k_min,
+                k_max,
+            } => (spot / k_max).max((spot / k_min).min(spot.like(1.0 / alpha))) * face,
         }
     }
 
-    /// The share price at which the bond's redemption equals the conversion value, for a soft call's trigger.
-    fn reference_price(&self, redemption: f64) -> f64 {
+    /// The share price at which the bond's redemption equals the conversion value, for a soft call's trigger; only a
+    /// fixed ratio has one.
+    fn reference_price(&self, redemption: f64) -> Option<f64> {
         match *self {
-            ConversionTerms::Fixed { ratio } => redemption / ratio,
+            ConversionTerms::Fixed { ratio } => Some(redemption / ratio),
+            ConversionTerms::Reset { .. } => None,
         }
     }
 }
@@ -144,11 +162,36 @@ impl ConvertibleTerms {
                 self.redemption
             ));
         }
-        let ConversionTerms::Fixed { ratio } = self.conversion;
-        if !(ratio > 0.0) || !ratio.is_finite() {
-            return invalid(format!(
-                "the conversion ratio must be positive, not {ratio}"
-            ));
+        match self.conversion {
+            ConversionTerms::Fixed { ratio } => {
+                if !(ratio > 0.0) || !ratio.is_finite() {
+                    return invalid(format!(
+                        "the conversion ratio must be positive, not {ratio}"
+                    ));
+                }
+            }
+            ConversionTerms::Reset {
+                face,
+                alpha,
+                k_min,
+                k_max,
+            } => {
+                if !(face > 0.0)
+                    || !face.is_finite()
+                    || !(alpha > 0.0)
+                    || !alpha.is_finite()
+                    || !(k_min > 0.0)
+                    || !k_min.is_finite()
+                {
+                    return invalid(format!("the face, the price ratio and the lower conversion price must be positive and finite, not {face}, {alpha}, {k_min}"));
+                }
+                if !(k_max >= k_min) {
+                    return invalid(format!("the upper conversion price {k_max} must not be below the lower one {k_min}"));
+                }
+                if self.callabilities.iter().any(|c| c.trigger.is_some()) {
+                    return invalid("a soft call needs a fixed conversion ratio, which a reset conversion price does not have".into());
+                }
+            }
         }
         let end = self.exercise.last_time();
         if !(end > 0.0) || !end.is_finite() {
@@ -284,7 +327,11 @@ fn build_lattice<T: Operand>(
             match call.kind {
                 CallabilityKind::Call => {
                     if let Some(trigger) = call.trigger {
-                        let level = conversion.reference_price(terms.redemption) * trigger;
+                        // `check` allows a trigger only with a fixed ratio
+                        let level = conversion
+                            .reference_price(terms.redemption)
+                            .unwrap_or(f64::INFINITY)
+                            * trigger;
                         for (j, v) in values.iter_mut().enumerate() {
                             let s = node_spot(i, j);
                             if s.primal() >= level {
@@ -820,5 +867,182 @@ mod tests {
         assert_eq!(closest_step(0.24, 0.1, 10), 2);
         assert_eq!(closest_step(5.0, 0.1, 10), 10); // beyond the end: the last step
         assert_eq!(closest_step(-1.0, 0.1, 10), 0);
+    }
+
+    fn reset(face: f64, alpha: f64, k_min: f64, k_max: f64) -> ConversionTerms {
+        ConversionTerms::Reset {
+            face,
+            alpha,
+            k_min,
+            k_max,
+        }
+    }
+
+    #[test]
+    fn the_conversion_value_of_a_reset_is_the_value_of_the_reset_price() {
+        // K(S) = min(120, max(60, 0.9 S)): 50 -> 60 (the lower), 100 -> 90, 200 -> 120 (the upper)
+        let terms = reset(100.0, 0.9, 60.0, 120.0);
+        for (spot, price) in [
+            (50.0, 60.0),
+            (65.0, 60.0),
+            (100.0, 90.0),
+            (140.0, 120.0),
+            (200.0, 120.0),
+        ] {
+            assert!(
+                (terms.value(spot) - 100.0 * spot / price).abs() < 1e-12 * terms.value(spot),
+                "{spot}: {} {}",
+                terms.value(spot),
+                100.0 * spot / price
+            );
+        }
+        // without an upper price: face min(S / k_min, 1 / alpha)
+        let open = reset(100.0, 0.9, 60.0, f64::INFINITY);
+        for spot in [30.0, 60.0, 66.0, 67.0, 90.0, 500.0] {
+            assert!(
+                (open.value(spot) - 100.0 * (spot / 60.0).min(1.0 / 0.9)).abs()
+                    < 1e-12 * open.value(spot),
+                "{spot}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reset_with_equal_prices_is_a_fixed_ratio() {
+        // k_min = k_max = K: face S / K, a conversion ratio face / K
+        let callabilities = vec![
+            Callability {
+                time: 3.0,
+                kind: CallabilityKind::Call,
+                price: 106.0,
+                trigger: None,
+            },
+            Callability {
+                time: 2.0,
+                kind: CallabilityKind::Put,
+                price: 100.0,
+                trigger: None,
+            },
+        ];
+        let exercise = ConversionExercise::American {
+            start: 0.0,
+            end: 5.0,
+        };
+        let i = inputs(92.0, 0.03, 0.01, 0.3, 0.02);
+        for alpha in [0.5, 0.9, 1.0, 1.3] {
+            let fixed = ConvertibleTerms {
+                callabilities: callabilities.clone(),
+                ..terms(100.0 / 95.0, 5, 2.0, exercise.clone())
+            };
+            let mscb = ConvertibleTerms {
+                conversion: reset(100.0, alpha, 95.0, 95.0),
+                ..fixed.clone()
+            };
+            let (a, b) = (
+                compute_convertible_value(&fixed, &i, 250).unwrap(),
+                compute_convertible_value(&mscb, &i, 250).unwrap(),
+            );
+            assert!((a - b).abs() < 1e-10 * a, "alpha {alpha}: {a} {b}");
+        }
+    }
+
+    #[test]
+    fn a_european_reset_without_coupons_or_spread_has_a_closed_form() {
+        // payoff F max(1, g(S_T)), g = S / k_min - (S / k_min - 1 / alpha)+ + (S / k_max - 1 / alpha)+ for k_min <= k_max, alpha <= 1:
+        // F e^{-rT} + F [call(k_min) / k_min - call(k_min / alpha) / k_min + call(k_max / alpha) / k_max]
+        let (spot, rate, dividend, vol, time, face) = (100.0, 0.03, 0.01, 0.25, 2.0, 100.0);
+        let call = |strike: f64| {
+            crate::options::compute_european_value(
+                crate::options::OptionType::Call,
+                &crate::options::OptionInputs {
+                    spot,
+                    strike,
+                    rate,
+                    dividend_yield: dividend,
+                    volatility: vol,
+                    time,
+                },
+            )
+            .unwrap()
+        };
+        for (alpha, k_min, k_max) in [(0.9, 80.0, 140.0), (0.8, 90.0, 110.0), (0.95, 70.0, 1e9)] {
+            let t = ConvertibleTerms {
+                coupons: vec![],
+                ..terms(1.0, 0, 0.0, ConversionExercise::European(time))
+            };
+            let t = ConvertibleTerms {
+                conversion: reset(face, alpha, k_min, k_max),
+                ..t
+            };
+            let v = compute_convertible_value(&t, &inputs(spot, rate, dividend, vol, 0.0), 2500)
+                .unwrap();
+            let expected = face * (-rate * time).exp()
+                + face
+                    * (call(k_min) / k_min - call(k_min / alpha) / k_min
+                        + call(k_max / alpha) / k_max);
+            assert!(
+                (v - expected).abs() < 3e-3 * expected,
+                "alpha {alpha}: {v} {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reset_conversion_price_is_checked() {
+        let base = terms(1.0, 5, 2.0, ConversionExercise::European(5.0));
+        let i = inputs(100.0, 0.03, 0.01, 0.25, 0.02);
+        let value = |c: ConversionTerms| {
+            compute_convertible_value(
+                &ConvertibleTerms {
+                    conversion: c,
+                    ..base.clone()
+                },
+                &i,
+                100,
+            )
+        };
+        assert!(value(reset(100.0, 0.9, 80.0, 140.0)).is_ok());
+        assert!(value(reset(100.0, 0.9, 80.0, f64::INFINITY)).is_ok());
+        assert!(value(reset(100.0, 0.9, 80.0, 70.0)).is_err());
+        assert!(value(reset(100.0, 0.0, 80.0, 140.0)).is_err());
+        assert!(value(reset(100.0, 0.9, 0.0, 140.0)).is_err());
+        assert!(value(reset(0.0, 0.9, 80.0, 140.0)).is_err());
+        assert!(value(reset(100.0, 0.9, 80.0, f64::NAN)).is_err());
+        let soft = ConvertibleTerms {
+            conversion: reset(100.0, 0.9, 80.0, 140.0),
+            callabilities: vec![Callability {
+                time: 3.0,
+                kind: CallabilityKind::Call,
+                price: 105.0,
+                trigger: Some(1.3),
+            }],
+            ..base
+        };
+        assert!(compute_convertible_value(&soft, &i, 100).is_err());
+    }
+
+    #[test]
+    fn the_greeks_of_a_reset_are_finite_and_signed() {
+        let t = ConvertibleTerms {
+            conversion: reset(100.0, 0.9, 80.0, f64::INFINITY),
+            ..terms(
+                1.0,
+                5,
+                2.0,
+                ConversionExercise::American {
+                    start: 0.0,
+                    end: 5.0,
+                },
+            )
+        };
+        // the spot is below k_min / alpha = 88.9: above it the holder converts at once for face / alpha, whatever the spot
+        let g = compute_convertible_greeks(&t, &inputs(70.0, 0.03, 0.01, 0.25, 0.02), 300).unwrap();
+        assert!(
+            g.value.is_finite() && g.delta.is_finite() && g.gamma.is_finite() && g.vega.is_finite()
+        );
+        assert!(
+            g.delta >= 0.0 && g.credit_spread_sensitivity < 0.0 && g.vega > 0.0,
+            "{g:?}"
+        );
     }
 }

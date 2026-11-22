@@ -2,6 +2,7 @@
 % Please edit documentation in R/convertible.R
 \name{compute_convertible_bond_value}
 \alias{compute_convertible_bond_value}
+\alias{compute_reset_convertible_bond_value}
 \title{Convertible bond}
 \usage{
 compute_convertible_bond_value(
@@ -10,6 +11,25 @@ compute_convertible_bond_value(
   exercise,
   exercise_dates,
   conversion_ratio,
+  spot,
+  rate,
+  dividend_yield,
+  volatility,
+  credit_spread,
+  steps = 200L,
+  callabilities = NULL,
+  day_count = "actual_365_fixed",
+  on_error = "stop"
+)
+
+compute_reset_convertible_bond_value(
+  bond,
+  settlement_date,
+  exercise,
+  exercise_dates,
+  conversion_price_ratio,
+  lower_conversion_price,
+  upper_conversion_price = Inf,
   spot,
   rate,
   dividend_yield,
@@ -51,6 +71,11 @@ Callabilities on or before \code{settlement_date} are dropped.}
 \code{"actual_365_fixed"}.}
 
 \item{on_error}{\code{"stop"} or \code{"na"}; see \link{rmql-package}.}
+
+\item{conversion_price_ratio}{For \code{compute_reset_convertible_bond_value()}: the conversion price is reset at conversion to this
+fraction of the share price at the same time, for example \code{0.9}.}
+
+\item{lower_conversion_price, upper_conversion_price}{The reset price stays between them; the upper one can be \code{Inf}.}
 }
 \value{
 A tibble with the market inputs and the columns \code{value}, \code{delta}, \code{gamma}, \code{vega}, \code{rho}, \code{dividend_rho},
@@ -81,6 +106,13 @@ one unit in the last place below the exercise end; for an American conversion it
 maturity, for some numbers of steps only (about 3\% of the cases tried). Here the bond can be converted at maturity.
 The values are the same otherwise (relative 1e-11 on 291 of 300 cases tried); in the others they differ by up to 0.7\%,
 in either direction, since the right to convert changes the probabilities that blend the discount rates.
+
+\strong{Reset conversion price (a bond with a downward adjustment clause, MSCB).} \code{compute_reset_convertible_bond_value()} converts
+at the price \verb{K(S) = min(upper, max(lower, ratio * S))} set by the share price \code{S} at the time of the conversion, for the
+bond's face (its notional at \code{settlement_date}): the holder receives \verb{face / K(S)} shares, worth
+\verb{face * max(S / upper, min(S / lower, 1 / ratio))}. No price is carried from one date to the next. With a ratio below 1 and an
+American conversion, the holder converts at once whenever \verb{S >= lower / ratio}, for \verb{face / ratio} whatever the spot, so the
+value is then that. A soft call is not available for it.
 
 Market inputs are recycled to a common length; the bond and the terms are one for all rows.
 }

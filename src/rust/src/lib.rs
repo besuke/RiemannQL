@@ -2925,7 +2925,11 @@ fn compute_convertible_bond_value(
     bond: ExternalPtr<FixedRateBond>,
     settlement_date: i32,
     day_count: &str,
+    reset: bool,
     conversion_ratio: f64,
+    reset_alpha: f64,
+    reset_lower: f64,
+    reset_upper: f64,
     exercise: &str,
     exercise_dates: Vec<i32>,
     call_dates: Vec<i32>,
@@ -2975,7 +2979,14 @@ fn compute_convertible_bond_value(
                 })
             })
             .collect::<Core<Vec<_>>>()?;
-        convertible::create_convertible_terms(&bond, date(settlement_date)?, &names::parse_day_count(day_count)?, ConversionTerms::Fixed { ratio: conversion_ratio }, &dated, &calls)
+        let settlement = date(settlement_date)?;
+        // a reset conversion price (the numbers of the other kind are placeholders), for the bond's face
+        let conversion = if reset {
+            ConversionTerms::Reset { face: bond.notional(settlement), alpha: reset_alpha, k_min: reset_lower, k_max: reset_upper }
+        } else {
+            ConversionTerms::Fixed { ratio: conversion_ratio }
+        };
+        convertible::create_convertible_terms(&bond, settlement, &names::parse_day_count(day_count)?, conversion, &dated, &calls)
     };
     let terms = match terms() {
         Ok(t) => t,
