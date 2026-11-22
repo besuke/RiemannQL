@@ -80,7 +80,7 @@ pub enum ConversionExercise {
 
 impl ConversionExercise {
     /// The end of the lattice: the last exercise time.
-    fn last_time(&self) -> f64 {
+    pub(crate) fn last_time(&self) -> f64 {
         match self {
             ConversionExercise::European(t) => *t,
             ConversionExercise::American { end, .. } => *end,
@@ -263,65 +263,132 @@ struct Lattice<T> {
     spot_step_2: [f64; 3],
 }
 
-/// `quantlib_rounding` replicates a floating-point artifact of QuantLib 1.42: its time grid ends at `(end / steps) * steps`,
-/// which can be one unit in the last place below `end`, and the test of an American conversion at the last time, `end <=
-/// grid end`, then fails: the bond cannot be converted at maturity. Without it (the default), it can.
-fn build_lattice<T: Operand>(
-    terms: &ConvertibleTerms,
-    inputs: &ConvertibleInputs<T>,
-    steps: usize,
-    quantlib_rounding: bool,
-) -> Result<Lattice<T>, Error> {
-    terms.check()?;
-    inputs.check()?;
-    if steps < 2 {
-        return invalid(format!("at least 2 time steps required, {steps} provided"));
-    }
-    let ConvertibleInputs {
-        spot,
-        rate,
-        dividend_yield,
-        volatility,
-        credit_spread,
-    } = *inputs;
-    let maturity = terms.exercise.last_time();
-    let dt = maturity / steps as f64;
-    let dx = volatility * dt.sqrt();
-    let drift = (rate - dividend_yield - volatility * volatility * 0.5) * dt;
-    let pu = drift / dx * 0.5 + 0.5;
-    if pu.primal() > 1.0 {
-        return invalid(format!("probability ({}) higher than one", pu.primal()));
-    }
-    if pu.primal() < 0.0 {
-        return invalid(format!("negative ({}) probability", pu.primal()));
-    }
-    let pd = -pu + 1.0;
-    let node_spot = |i: usize, j: usize| spot * (dx * (2.0 * j as f64 - i as f64)).exp();
-    let step = |time: f64| closest_step(time, dt, steps);
-    let call_steps: Vec<usize> = terms.callabilities.iter().map(|c| step(c.time)).collect();
-    let coupon_steps: Vec<usize> = terms.coupons.iter().map(|c| step(c.time)).collect();
-    let exercise_steps: Vec<usize> = match &terms.exercise {
-        ConversionExercise::European(t) => vec![step(*t)],
-        ConversionExercise::American { start, end } => vec![step(*start), step(*end)],
-        ConversionExercise::Bermudan(times) => times.iter().map(|&t| step(t)).collect(),
-    };
-    let skipped_at_the_end = quantlib_rounding && !(maturity <= dt * steps as f64);
-    let convertible_at = |i: usize| match &terms.exercise {
-        ConversionExercise::American { .. } => {
-            exercise_steps[0] <= i && i <= exercise_steps[1] && !(i == steps && skipped_at_the_end)
+/// The values at the nodes of one time of the lattice: the value of the bond, the probability that it ends in conversion
+/// and the discount rate of the node, which is the blend of the probability taken before the adjustments of the time.
+#[derive(Clone)]
+pub(crate) struct State<T> {
+    pub values: Vec<T>,
+    pub probability: Vec<T>,
+    pub rates: Vec<T>,
+}
+
+/// The lattice of a convertible bond with its events, one step at a time, so that a conversion can be given to each step
+/// (a conversion price that is reset, `mscb.rs`). `spot` is the share price at the first node; the conversion given to a step
+/// is used there, and the conversion of the terms is not (only `check` looks at it).
+pub(crate) struct Engine<'a, T: Operand> {
+    pub steps: usize,
+    pub dt: f64,
+    pub dx: T,
+    pub spot: T,
+    pu: T,
+    pd: T,
+    rate: T,
+    credit_spread: T,
+    terms: &'a ConvertibleTerms,
+    call_steps: Vec<usize>,
+    coupon_steps: Vec<usize>,
+    exercise_steps: Vec<usize>,
+    skipped_at_the_end: bool,
+}
+
+impl<'a, T: Operand> Engine<'a, T> {
+    /// `quantlib_rounding` replicates a floating-point artifact of QuantLib 1.42: its time grid ends at `(end / steps) * steps`,
+    /// which can be one unit in the last place below `end`, and the test of an American conversion at the last time, `end <=
+    /// grid end`, then fails: the bond cannot be converted at maturity. Without it (the default), it can.
+    pub(crate) fn new(
+        terms: &'a ConvertibleTerms,
+        spot: T,
+        inputs: &ConvertibleInputs<T>,
+        steps: usize,
+        quantlib_rounding: bool,
+    ) -> Result<Self, Error> {
+        terms.check()?;
+        inputs.check()?;
+        if steps < 2 {
+            return invalid(format!("at least 2 time steps required, {steps} provided"));
         }
-        _ => exercise_steps.contains(&i),
-    };
-    let zero = spot.like(0.0);
-    let one = spot.like(1.0);
-    let conversion = terms.conversion;
-    // the adjustments of a time: calls and puts, then coupons, then conversion
-    let adjust = |i: usize, values: &mut [T], probability: &mut [T]| {
-        let convertible = convertible_at(i);
+        let ConvertibleInputs {
+            rate,
+            dividend_yield,
+            volatility,
+            credit_spread,
+            ..
+        } = *inputs;
+        let maturity = terms.exercise.last_time();
+        let dt = maturity / steps as f64;
+        let dx = volatility * dt.sqrt();
+        let drift = (rate - dividend_yield - volatility * volatility * 0.5) * dt;
+        let pu = drift / dx * 0.5 + 0.5;
+        if pu.primal() > 1.0 {
+            return invalid(format!("probability ({}) higher than one", pu.primal()));
+        }
+        if pu.primal() < 0.0 {
+            return invalid(format!("negative ({}) probability", pu.primal()));
+        }
+        let pd = -pu + 1.0;
+        let step = |time: f64| closest_step(time, dt, steps);
+        let exercise_steps: Vec<usize> = match &terms.exercise {
+            ConversionExercise::European(t) => vec![step(*t)],
+            ConversionExercise::American { start, end } => vec![step(*start), step(*end)],
+            ConversionExercise::Bermudan(times) => times.iter().map(|&t| step(t)).collect(),
+        };
+        Ok(Engine {
+            steps,
+            dt,
+            dx,
+            spot,
+            pu,
+            pd,
+            rate,
+            credit_spread,
+            terms,
+            call_steps: terms.callabilities.iter().map(|c| step(c.time)).collect(),
+            coupon_steps: terms.coupons.iter().map(|c| step(c.time)).collect(),
+            exercise_steps,
+            skipped_at_the_end: quantlib_rounding && !(maturity <= dt * steps as f64),
+        })
+    }
+
+    /// The step of the lattice nearest to a time.
+    pub(crate) fn step_of(&self, time: f64) -> usize {
+        closest_step(time, self.dt, self.steps)
+    }
+
+    /// The share price at node `j` of step `i`.
+    pub(crate) fn node_spot(&self, i: usize, j: usize) -> T {
+        self.spot * (self.dx * (2.0 * j as f64 - i as f64)).exp()
+    }
+
+    fn convertible_at(&self, i: usize) -> bool {
+        match &self.terms.exercise {
+            ConversionExercise::American { .. } => {
+                self.exercise_steps[0] <= i
+                    && i <= self.exercise_steps[1]
+                    && !(i == self.steps && self.skipped_at_the_end)
+            }
+            _ => self.exercise_steps.contains(&i),
+        }
+    }
+
+    fn blended(&self, p: T) -> T {
+        p * self.rate + (-p + 1.0) * (self.rate + self.credit_spread)
+    }
+
+    /// The adjustments of a time: calls and puts, then coupons, then conversion.
+    fn adjust(
+        &self,
+        i: usize,
+        conversion: &ConversionTerms,
+        values: &mut [T],
+        probability: &mut [T],
+    ) {
+        let terms = self.terms;
+        let one = self.spot.like(1.0);
+        let convertible = self.convertible_at(i);
         for (call, _) in terms
             .callabilities
             .iter()
-            .zip(&call_steps)
+            .zip(&self.call_steps)
             .filter(|(_, &s)| s == i)
         {
             match call.kind {
@@ -333,7 +400,7 @@ fn build_lattice<T: Operand>(
                             .unwrap_or(f64::INFINITY)
                             * trigger;
                         for (j, v) in values.iter_mut().enumerate() {
-                            let s = node_spot(i, j);
+                            let s = self.node_spot(i, j);
                             if s.primal() >= level {
                                 *v = conversion.value(s).max(v.like(call.price)).min(*v);
                             }
@@ -341,7 +408,7 @@ fn build_lattice<T: Operand>(
                     } else if convertible {
                         for (j, v) in values.iter_mut().enumerate() {
                             *v = conversion
-                                .value(node_spot(i, j))
+                                .value(self.node_spot(i, j))
                                 .max(v.like(call.price))
                                 .min(*v);
                         }
@@ -361,7 +428,7 @@ fn build_lattice<T: Operand>(
         for (coupon, _) in terms
             .coupons
             .iter()
-            .zip(&coupon_steps)
+            .zip(&self.coupon_steps)
             .filter(|(_, &s)| s == i)
         {
             for v in values.iter_mut() {
@@ -370,45 +437,77 @@ fn build_lattice<T: Operand>(
         }
         if convertible {
             for (j, (v, p)) in values.iter_mut().zip(probability.iter_mut()).enumerate() {
-                let payoff = conversion.value(node_spot(i, j));
+                let payoff = conversion.value(self.node_spot(i, j));
                 if v.primal() <= payoff.primal() {
                     *v = payoff;
                     *p = one;
                 }
             }
         }
-    };
-    let blended = |p: T| p * rate + (-p + 1.0) * (rate + credit_spread);
-    // the redemption at the end, then the adjustments of the last time, then the rates
-    let mut values: Vec<T> = vec![spot.like(terms.redemption); steps + 1];
-    let mut probability: Vec<T> = vec![zero; steps + 1];
-    adjust(steps, &mut values, &mut probability);
-    let mut rates: Vec<T> = probability.iter().map(|&p| blended(p)).collect();
-    let (mut at_step_1, mut at_step_2) = ([zero; 2], [zero; 3]);
-    for i in (0..steps).rev() {
-        let new_probability: Vec<T> = (0..=i)
-            .map(|j| pd * probability[j] + pu * probability[j + 1])
-            .collect();
-        let new_rates: Vec<T> = new_probability.iter().map(|&p| blended(p)).collect();
-        let new_values: Vec<T> = (0..=i)
-            .map(|j| {
-                pd * values[j] / (rates[j] * dt + 1.0)
-                    + pu * values[j + 1] / (rates[j + 1] * dt + 1.0)
-            })
-            .collect();
-        values = new_values;
-        probability = new_probability;
-        rates = new_rates;
-        adjust(i, &mut values, &mut probability);
-        if i == 2 {
-            at_step_2 = [values[0], values[1], values[2]];
-        } else if i == 1 {
-            at_step_1 = [values[0], values[1]];
+    }
+
+    /// The redemption at the end, then the adjustments of the last time, then the rates.
+    pub(crate) fn terminal(&self, conversion: &ConversionTerms) -> State<T> {
+        let mut values: Vec<T> = vec![self.spot.like(self.terms.redemption); self.steps + 1];
+        let mut probability: Vec<T> = vec![self.spot.like(0.0); self.steps + 1];
+        self.adjust(self.steps, conversion, &mut values, &mut probability);
+        let rates = probability.iter().map(|&p| self.blended(p)).collect();
+        State {
+            values,
+            probability,
+            rates,
         }
     }
-    let at = |i: usize, j: usize| spot.primal() * (dx.primal() * (2.0 * j as f64 - i as f64)).exp();
+
+    /// One step back to time `i` (from the state at `i + 1`), and the adjustments of `i`. The new rates are made from the new
+    /// probability before the adjustments, so a conversion of time `i` is not in them.
+    pub(crate) fn step_back(
+        &self,
+        i: usize,
+        state: &State<T>,
+        conversion: &ConversionTerms,
+    ) -> State<T> {
+        let (pd, pu, dt) = (self.pd, self.pu, self.dt);
+        let mut probability: Vec<T> = (0..=i)
+            .map(|j| pd * state.probability[j] + pu * state.probability[j + 1])
+            .collect();
+        let rates: Vec<T> = probability.iter().map(|&p| self.blended(p)).collect();
+        let mut values: Vec<T> = (0..=i)
+            .map(|j| {
+                pd * state.values[j] / (state.rates[j] * dt + 1.0)
+                    + pu * state.values[j + 1] / (state.rates[j + 1] * dt + 1.0)
+            })
+            .collect();
+        self.adjust(i, conversion, &mut values, &mut probability);
+        State {
+            values,
+            probability,
+            rates,
+        }
+    }
+}
+
+fn build_lattice<T: Operand>(
+    terms: &ConvertibleTerms,
+    inputs: &ConvertibleInputs<T>,
+    steps: usize,
+    quantlib_rounding: bool,
+) -> Result<Lattice<T>, Error> {
+    let engine = Engine::new(terms, inputs.spot, inputs, steps, quantlib_rounding)?;
+    let zero = inputs.spot.like(0.0);
+    let mut state = engine.terminal(&terms.conversion);
+    let (mut at_step_1, mut at_step_2) = ([zero; 2], [zero; 3]);
+    for i in (0..steps).rev() {
+        state = engine.step_back(i, &state, &terms.conversion);
+        if i == 2 {
+            at_step_2 = [state.values[0], state.values[1], state.values[2]];
+        } else if i == 1 {
+            at_step_1 = [state.values[0], state.values[1]];
+        }
+    }
+    let at = |i: usize, j: usize| engine.node_spot(i, j).primal();
     Ok(Lattice {
-        value: values[0],
+        value: state.values[0],
         at_step_1,
         at_step_2,
         spot_step_1: [at(1, 0), at(1, 1)],

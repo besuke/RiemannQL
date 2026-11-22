@@ -82,3 +82,52 @@ test_that("a reset conversion price is checked", {
   soft <- data.frame(date = as.Date("2029-11-02"), kind = "call", price = 105, trigger = 1.3)
   expect_error(compute_reset_convertible_bond_value(bond(), "2026-11-02", "european", "2031-11-02", 0.9, 80, 140, 100, 0.03, 0.01, 0.25, 0.02, 100L, soft), "soft call")
 })
+
+test_that("a conversion price carried between resets: no resets or a reset that never changes the price is a fixed ratio", {
+  fixed <- compute_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), 100 / 100, 92, 0.03, 0.01, 0.25, 0.02, 200L)
+  for (method in c("grid", "scaled")) {
+    none <- compute_carried_reset_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), as.Date(character()),
+                                                         "downward_only", 0.9, 100, spot = 92, rate = 0.03, dividend_yield = 0.01, volatility = 0.25,
+                                                         credit_spread = 0.02, steps = 200L, method = method)
+    expect_equal(none$value, fixed$value, tolerance = 1e-10)
+    never <- compute_carried_reset_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"),
+                                                          as.Date(c("2027-11-02", "2028-11-02")), "downward_only", 1e6, 100, spot = 92, rate = 0.03,
+                                                          dividend_yield = 0.01, volatility = 0.25, credit_spread = 0.02, steps = 200L, method = method)
+    expect_equal(never$value, fixed$value, tolerance = 1e-10)
+  }
+})
+
+test_that("a European conversion with one reset has a closed form (the rule both), and the grid and the scaled lattice agree", {
+  zero_coupon <- create_fixed_rate_bond(0L, 100, "2026-11-02", "2028-11-02", "1Y", "japan", "unadjusted", "unadjusted", "backward", FALSE, 0,
+                                        "actual_365_fixed", "unadjusted", 100)
+  # F e^{-rT} + e^{-r tau} (F / alpha) call(1, alpha, T - tau), T = 2, tau = 1 (the reset on 2027-11-02, 365 days)
+  alpha <- 0.9
+  expected <- 100 * exp(-0.03 * 2) + exp(-0.03 * 365 / 365) * (100 / alpha) * compute_european_option_value("call", 1, alpha, 0.03, 0.01, 0.25, 1)$value
+  value <- function(method, steps, nodes = 40L) {
+    compute_carried_reset_convertible_bond_value(zero_coupon, "2026-11-02", "european", "2028-11-02", as.Date("2027-11-02"), "both", alpha, 100,
+                                                 spot = 100, rate = 0.03, dividend_yield = 0.01, volatility = 0.25, credit_spread = 0, steps = steps,
+                                                 method = method, price_nodes = nodes)$value
+  }
+  expect_equal(value("scaled", 1500L), expected, tolerance = 5e-3)
+  expect_equal(value("grid", 300L, 100L), expected, tolerance = 1e-2)
+})
+
+test_that("a carried reset conversion price is checked", {
+  args <- list(bond(), "2026-11-02", "european", "2031-11-02", as.Date("2028-11-02"), "downward_only", 0.9, 100, 0, Inf, 100, 0.03, 0.01, 0.25, 0.02, 100L)
+  expect_no_error(do.call(compute_carried_reset_convertible_bond_value, args))
+  expect_error(do.call(compute_carried_reset_convertible_bond_value, replace(args, 6, "sideways")), "unknown reset rule")
+  expect_error(do.call(compute_carried_reset_convertible_bond_value, c(args, list(method = "cubic"))), "unknown method")
+  expect_error(do.call(compute_carried_reset_convertible_bond_value, c(replace(args, 9, 60), list(method = "scaled"))), "no limits")
+  expect_error(do.call(compute_carried_reset_convertible_bond_value, replace(args, 5, list(as.Date("2032-01-02")))), "reset times")
+  expect_error(do.call(compute_carried_reset_convertible_bond_value, replace(args, 8, -1)), "positive")
+})
+
+test_that("greeks = FALSE gives the same value and no Greeks", {
+  call <- function(greeks) compute_carried_reset_convertible_bond_value(bond(), "2026-11-02", "american", c("2026-11-02", "2031-11-02"), as.Date(c("2027-11-02", "2029-11-02")),
+                                                                         "downward_only", 0.9, 100, spot = 85, rate = 0.03, dividend_yield = 0.01, volatility = 0.25,
+                                                                         credit_spread = 0.02, steps = 100L, price_nodes = 30L, greeks = greeks)
+  with <- call(TRUE); without <- call(FALSE)
+  expect_equal(without$value, with$value, tolerance = 1e-12)
+  expect_true(all(is.na(without[c("delta", "gamma", "vega", "rho", "dividend_rho", "credit_spread_sensitivity")])))
+  expect_true(all(is.finite(unlist(with[c("delta", "gamma", "vega", "rho", "credit_spread_sensitivity")]))))
+})

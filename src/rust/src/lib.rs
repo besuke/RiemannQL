@@ -22,6 +22,7 @@ use rmql::hull_white::{
 use rmql::instruments::{FixedRateBond, FixedRateBondSpec};
 use rmql::convertible::{self, CallabilityKind, ConversionTerms, ConvertibleInputs, DatedCallability, DatedExercise};
 use rmql::lookback::{self, LookbackGreeks, LookbackInputs};
+use rmql::mscb;
 use rmql::longstaff_schwartz::{
     self, CalibrationPaths, FewInTheMoney, LongstaffSchwartzSettings, PathSequence,
 };
@@ -2919,6 +2920,60 @@ fn compute_discrete_lookback_option_value(
         )
     })
 }
+/// The terms of a convertible bond from a bond, its dates and the callabilities given by vectors; `conversion` makes the
+/// conversion terms from the bond's face.
+#[allow(clippy::type_complexity)]
+fn dated_convertible_terms(
+    bond: &FixedRateBond,
+    settlement_date: i32,
+    day_count: &str,
+    conversion: &dyn Fn(f64) -> ConversionTerms,
+    exercise: &str,
+    exercise_dates: &[i32],
+    calls: (&[i32], &[String], &[f64], &[String], &[f64]),
+) -> Core<convertible::ConvertibleTerms> {
+    let (call_dates, call_kinds, call_prices, call_price_types, call_triggers) = calls;
+    same_length(&[
+        ("call_dates", call_dates.len()),
+        ("call_kinds", call_kinds.len()),
+        ("call_prices", call_prices.len()),
+        ("call_price_types", call_price_types.len()),
+        ("call_triggers", call_triggers.len()),
+    ])?;
+    let dates = exercise_dates.iter().map(|&d| date(d)).collect::<Core<Vec<_>>>()?;
+    let dated = match (exercise, dates.as_slice()) {
+        ("european", [d]) => DatedExercise::European(*d),
+        ("american", [start, end]) => DatedExercise::American { start: *start, end: *end },
+        ("bermudan", all) if !all.is_empty() => DatedExercise::Bermudan(all.to_vec()),
+        ("european" | "american" | "bermudan", _) => {
+            return Err(rmql::Error::InvalidInput {
+                reason: format!(
+                    "a {exercise} exercise takes {}, not {} dates",
+                    if exercise == "european" { "1 date" } else if exercise == "american" { "2 dates (start, end)" } else { "at least 1 date" },
+                    dates.len()
+                ),
+            })
+        }
+        (other, _) => return Err(rmql::Error::InvalidInput { reason: format!("unknown exercise `{other}`") }),
+    };
+    let calls = (0..call_dates.len())
+        .map(|i| {
+            Ok(DatedCallability {
+                date: date(call_dates[i])?,
+                kind: match call_kinds[i].as_str() {
+                    "call" => CallabilityKind::Call,
+                    "put" => CallabilityKind::Put,
+                    other => return Err(rmql::Error::InvalidInput { reason: format!("unknown callability `{other}`") }),
+                },
+                price: call_prices[i],
+                price_type: names::parse_price_type(&call_price_types[i])?,
+                trigger: if call_triggers[i].is_nan() { None } else { Some(call_triggers[i]) },
+            })
+        })
+        .collect::<Core<Vec<_>>>()?;
+    let settlement = date(settlement_date)?;
+    convertible::create_convertible_terms(bond, settlement, &names::parse_day_count(day_count)?, conversion(bond.notional(settlement)), &dated, &calls)
+}
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn compute_convertible_bond_value(
@@ -2944,51 +2999,23 @@ fn compute_convertible_bond_value(
     credit_spread: Vec<f64>,
     steps: Vec<i32>,
 ) -> List {
-    let terms = || -> Core<convertible::ConvertibleTerms> {
-        same_length(&[
-            ("call_dates", call_dates.len()),
-            ("call_kinds", call_kinds.len()),
-            ("call_prices", call_prices.len()),
-            ("call_price_types", call_price_types.len()),
-            ("call_triggers", call_triggers.len()),
-        ])?;
-        let dates = exercise_dates.iter().map(|&d| date(d)).collect::<Core<Vec<_>>>()?;
-        let dated = match (exercise, dates.as_slice()) {
-            ("european", [d]) => DatedExercise::European(*d),
-            ("american", [start, end]) => DatedExercise::American { start: *start, end: *end },
-            ("bermudan", all) if !all.is_empty() => DatedExercise::Bermudan(all.to_vec()),
-            ("european" | "american" | "bermudan", _) => {
-                return Err(rmql::Error::InvalidInput {
-                    reason: format!("a {exercise} exercise takes {}, not {} dates", if exercise == "european" { "1 date" } else if exercise == "american" { "2 dates (start, end)" } else { "at least 1 date" }, dates.len()),
-                })
+    let terms = dated_convertible_terms(
+        &bond,
+        settlement_date,
+        day_count,
+        &|face| {
+            // a reset conversion price (the numbers of the other kind are placeholders), for the bond's face
+            if reset {
+                ConversionTerms::Reset { face, alpha: reset_alpha, k_min: reset_lower, k_max: reset_upper }
+            } else {
+                ConversionTerms::Fixed { ratio: conversion_ratio }
             }
-            (other, _) => return Err(rmql::Error::InvalidInput { reason: format!("unknown exercise `{other}`") }),
-        };
-        let calls = (0..call_dates.len())
-            .map(|i| {
-                Ok(DatedCallability {
-                    date: date(call_dates[i])?,
-                    kind: match call_kinds[i].as_str() {
-                        "call" => CallabilityKind::Call,
-                        "put" => CallabilityKind::Put,
-                        other => return Err(rmql::Error::InvalidInput { reason: format!("unknown callability `{other}`") }),
-                    },
-                    price: call_prices[i],
-                    price_type: names::parse_price_type(&call_price_types[i])?,
-                    trigger: if call_triggers[i].is_nan() { None } else { Some(call_triggers[i]) },
-                })
-            })
-            .collect::<Core<Vec<_>>>()?;
-        let settlement = date(settlement_date)?;
-        // a reset conversion price (the numbers of the other kind are placeholders), for the bond's face
-        let conversion = if reset {
-            ConversionTerms::Reset { face: bond.notional(settlement), alpha: reset_alpha, k_min: reset_lower, k_max: reset_upper }
-        } else {
-            ConversionTerms::Fixed { ratio: conversion_ratio }
-        };
-        convertible::create_convertible_terms(&bond, settlement, &names::parse_day_count(day_count)?, conversion, &dated, &calls)
-    };
-    let terms = match terms() {
+        },
+        exercise,
+        &exercise_dates,
+        (&call_dates, &call_kinds, &call_prices, &call_price_types, &call_triggers),
+    );
+    let terms = match terms {
         Ok(t) => t,
         Err(e) => return failure(e),
     };
@@ -3008,6 +3035,110 @@ fn compute_convertible_bond_value(
             &ConvertibleInputs { spot: spot[i], rate: rate[i], dividend_yield: dividend_yield[i], volatility: volatility[i], credit_spread: credit_spread[i] },
             size(steps[i], "steps[i]")?,
         )?;
+        Ok([g.value, g.delta, g.gamma, g.vega, g.rho, g.dividend_rho, g.credit_spread_sensitivity])
+    });
+    list!(
+        value = columns[0].clone(),
+        delta = columns[1].clone(),
+        gamma = columns[2].clone(),
+        vega = columns[3].clone(),
+        rho = columns[4].clone(),
+        dividend_rho = columns[5].clone(),
+        credit_spread_sensitivity = columns[6].clone(),
+        error = error
+    )
+}
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn compute_carried_reset_convertible_bond_value(
+    bond: ExternalPtr<FixedRateBond>,
+    settlement_date: i32,
+    day_count: &str,
+    exercise: &str,
+    exercise_dates: Vec<i32>,
+    reset_dates: Vec<i32>,
+    rule: &str,
+    alpha: f64,
+    k_min: f64,
+    k_max: f64,
+    initial_price: f64,
+    method: &str,
+    price_nodes: i32,
+    greeks: bool,
+    call_dates: Vec<i32>,
+    call_kinds: Vec<String>,
+    call_prices: Vec<f64>,
+    call_price_types: Vec<String>,
+    call_triggers: Vec<f64>,
+    spot: Vec<f64>,
+    rate: Vec<f64>,
+    dividend_yield: Vec<f64>,
+    volatility: Vec<f64>,
+    credit_spread: Vec<f64>,
+    steps: Vec<i32>,
+) -> List {
+    let terms = || -> Core<mscb::MscbTerms> {
+        let settlement = date(settlement_date)?;
+        let schedule = dated_convertible_terms(
+            &bond,
+            settlement_date,
+            day_count,
+            &|_| ConversionTerms::Fixed { ratio: 1.0 },
+            exercise,
+            &exercise_dates,
+            (&call_dates, &call_kinds, &call_prices, &call_price_types, &call_triggers),
+        )?;
+        let dc = names::parse_day_count(day_count)?;
+        let reset_times = reset_dates
+            .iter()
+            .map(|&d| dc.year_fraction(settlement, date(d)?, None, None))
+            .collect::<Core<Vec<f64>>>()?;
+        let rule = match rule {
+            "both" => mscb::ResetRule::Both { alpha, k_min, k_max },
+            "downward_only" => mscb::ResetRule::DownwardOnly { alpha, k_min },
+            other => return Err(rmql::Error::InvalidInput { reason: format!("unknown reset rule `{other}`: both or downward_only") }),
+        };
+        Ok(mscb::MscbTerms {
+            redemption: schedule.redemption,
+            face: bond.notional(settlement),
+            initial_price,
+            exercise: schedule.exercise,
+            coupons: schedule.coupons,
+            callabilities: schedule.callabilities,
+            reset_times,
+            rule,
+        })
+    };
+    let terms = match terms() {
+        Ok(t) => t,
+        Err(e) => return failure(e),
+    };
+    let method = match method {
+        "grid" => match size(price_nodes, "price_nodes") {
+            Ok(price_nodes) => mscb::MscbMethod::Grid { price_nodes },
+            Err(e) => return failure(e),
+        },
+        "scaled" => mscb::MscbMethod::Scaled,
+        other => return failure(rmql::Error::InvalidInput { reason: format!("unknown method `{other}`: grid or scaled") }),
+    };
+    if let Err(e) = same_length(&[
+        ("spot", spot.len()),
+        ("rate", rate.len()),
+        ("dividend_yield", dividend_yield.len()),
+        ("volatility", volatility.len()),
+        ("credit_spread", credit_spread.len()),
+        ("steps", steps.len()),
+    ]) {
+        return failure(e);
+    }
+    let (columns, error) = table(spot.len(), |i| {
+        let inputs = ConvertibleInputs { spot: spot[i], rate: rate[i], dividend_yield: dividend_yield[i], volatility: volatility[i], credit_spread: credit_spread[i] };
+        let steps = size(steps[i], "steps[i]")?;
+        if !greeks {
+            // the value alone: no recording of the lattice, much faster for a grid
+            return Ok([mscb::compute_mscb_value(&terms, &inputs, steps, method)?, na_real(), na_real(), na_real(), na_real(), na_real(), na_real()]);
+        }
+        let g = mscb::compute_mscb_greeks(&terms, &inputs, steps, method)?;
         Ok([g.value, g.delta, g.gamma, g.vega, g.rho, g.dividend_rho, g.credit_spread_sensitivity])
     });
     list!(
@@ -4859,6 +4990,7 @@ extendr_module! {
     fn compute_binomial_option_value;
     fn compute_lookback_option_value;
     fn compute_convertible_bond_value;
+    fn compute_carried_reset_convertible_bond_value;
     fn compute_discrete_lookback_option_value;
     fn compute_american_approximation_value;
     fn compute_forward_option_value;

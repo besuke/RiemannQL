@@ -28,6 +28,7 @@ pub mod lookback;
 pub mod longstaff_schwartz;
 pub mod market_risk;
 pub mod mbs;
+pub mod mscb;
 pub mod interest_rate;
 pub mod irrbb;
 pub mod math;

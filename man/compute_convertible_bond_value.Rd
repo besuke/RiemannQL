@@ -3,6 +3,7 @@
 \name{compute_convertible_bond_value}
 \alias{compute_convertible_bond_value}
 \alias{compute_reset_convertible_bond_value}
+\alias{compute_carried_reset_convertible_bond_value}
 \title{Convertible bond}
 \usage{
 compute_convertible_bond_value(
@@ -36,6 +37,31 @@ compute_reset_convertible_bond_value(
   volatility,
   credit_spread,
   steps = 200L,
+  callabilities = NULL,
+  day_count = "actual_365_fixed",
+  on_error = "stop"
+)
+
+compute_carried_reset_convertible_bond_value(
+  bond,
+  settlement_date,
+  exercise,
+  exercise_dates,
+  reset_dates,
+  rule = "downward_only",
+  conversion_price_ratio,
+  initial_conversion_price,
+  lower_conversion_price = 0,
+  upper_conversion_price = Inf,
+  spot,
+  rate,
+  dividend_yield,
+  volatility,
+  credit_spread,
+  steps = 200L,
+  method = "grid",
+  price_nodes = 40L,
+  greeks = TRUE,
   callabilities = NULL,
   day_count = "actual_365_fixed",
   on_error = "stop"
@@ -76,6 +102,24 @@ Callabilities on or before \code{settlement_date} are dropped.}
 fraction of the share price at the same time, for example \code{0.9}.}
 
 \item{lower_conversion_price, upper_conversion_price}{The reset price stays between them; the upper one can be \code{Inf}.}
+
+\item{reset_dates}{For \code{compute_carried_reset_convertible_bond_value()}: the dates on which the conversion price is reset,
+increasing, after \code{settlement_date} and not after the last exercise date. Each needs a step of its own in the lattice.}
+
+\item{rule}{\code{"downward_only"}: the new price is \verb{min(old price, max(lower, ratio * S))}; \code{"both"}:
+\verb{min(upper, max(lower, ratio * S))}, whatever the old price. \code{S} is the share price on the reset date; the reset comes before any
+conversion on that date.}
+
+\item{initial_conversion_price}{The conversion price until the first reset date.}
+
+\item{method}{\code{"grid"}: a grid of \code{price_nodes} conversion prices, in any case; \code{"scaled"}: one dimension in the ratio of the
+share price to the conversion price, only without limits (\code{lower_conversion_price = 0}, and \code{upper_conversion_price = Inf} for
+\code{"both"}).}
+
+\item{price_nodes}{Conversion prices of the grid, at least 2 (not used by \code{"scaled"}).}
+
+\item{greeks}{\code{FALSE} gives the value alone, \code{NA} in the Greek columns, and is much faster for a grid (the lattice is not recorded
+for automatic differentiation).}
 }
 \value{
 A tibble with the market inputs and the columns \code{value}, \code{delta}, \code{gamma}, \code{vega}, \code{rho}, \code{dividend_rho},
@@ -113,6 +157,15 @@ bond's face (its notional at \code{settlement_date}): the holder receives \verb{
 \verb{face * max(S / upper, min(S / lower, 1 / ratio))}. No price is carried from one date to the next. With a ratio below 1 and an
 American conversion, the holder converts at once whenever \verb{S >= lower / ratio}, for \verb{face / ratio} whatever the spot, so the
 value is then that. A soft call is not available for it.
+
+\strong{Conversion price carried between reset dates (MSCB).} \code{compute_carried_reset_convertible_bond_value()} fixes the conversion
+price between the \code{reset_dates} and sets a new one on each, by \code{rule}. The lattice has the conversion price as a second state. With
+\code{method = "grid"} each conversion price of a grid has its lattice in the share price, joined on the reset dates by interpolating,
+linearly in the inverse of the price, at the new price; the prices run from the lowest to the highest that a reset can give, with
+\code{initial_conversion_price} as a node. With \code{method = "scaled"} the value depends on the share price over the conversion price
+only, and one lattice does (without limits on the price). The two agree up to the interpolation, which shrinks with \code{steps} and
+\code{price_nodes}; the scaled one is much faster. Soft calls are available (the conversion ratio of the grid's lattice is the
+face over its price). The Greeks of the grid hold the grid of prices fixed when the spot moves.
 
 Market inputs are recycled to a common length; the bond and the terms are one for all rows.
 }

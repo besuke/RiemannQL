@@ -73,6 +73,18 @@ compute_reset_convertible_bond_value <- function(bond, settlement_date, exercise
 convertible_table <- function(bond, settlement_date, exercise, exercise_dates, reset, conversion_ratio, alpha, lower, upper, spot, rate, dividend_yield,
                               volatility, credit_spread, steps, callabilities, day_count, on_error) {
   if (!inherits(bond, "rmql_bond")) stop("`bond` must come from create_fixed_rate_bond().", call. = FALSE)
+  calls <- as_callabilities(callabilities)
+  i <- tibble(spot = as.numeric(spot), rate = as.numeric(rate), dividend_yield = as.numeric(dividend_yield), volatility = as.numeric(volatility),
+              credit_spread = as.numeric(credit_spread), steps = as.integer(steps))
+  rows <- checked(.Call(wrap__compute_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count), reset, conversion_ratio, alpha, lower, upper,
+                as.character(exercise), as_serial(exercise_dates), as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price),
+                as.character(calls$price_type), as.numeric(calls$trigger), i$spot, i$rate, i$dividend_yield, i$volatility, i$credit_spread, i$steps))
+  rows <- finish_rows(rows, on_error)
+  values <- tibble::as_tibble(rows[setdiff(names(rows), "error")])
+  tibble::as_tibble(c(as.list(i[setdiff(names(i), "steps")]), list(steps = i$steps), as.list(values), list(error = rows$error)))
+}
+
+as_callabilities <- function(callabilities) {
   calls <- callabilities
   if (is.null(calls)) {
     calls <- data.frame(date = as.Date(character()), kind = character(), price = numeric(), price_type = character(), trigger = numeric())
@@ -81,11 +93,37 @@ convertible_table <- function(bond, settlement_date, exercise, exercise_dates, r
     if (is.null(calls$price_type)) calls$price_type <- "dirty"
     if (is.null(calls$trigger)) calls$trigger <- NA_real_
   }
+  calls
+}
+
+#' @rdname compute_convertible_bond_value
+#' @param reset_dates For `compute_carried_reset_convertible_bond_value()`: the dates on which the conversion price is reset,
+#'   increasing, after `settlement_date` and not after the last exercise date. Each needs a step of its own in the lattice.
+#' @param rule `"downward_only"`: the new price is `min(old price, max(lower, ratio * S))`; `"both"`:
+#'   `min(upper, max(lower, ratio * S))`, whatever the old price. `S` is the share price on the reset date; the reset comes before any
+#'   conversion on that date.
+#' @param initial_conversion_price The conversion price until the first reset date.
+#' @param method `"grid"`: a grid of `price_nodes` conversion prices, in any case; `"scaled"`: one dimension in the ratio of the
+#'   share price to the conversion price, only without limits (`lower_conversion_price = 0`, and `upper_conversion_price = Inf` for
+#'   `"both"`).
+#' @param price_nodes Conversion prices of the grid, at least 2 (not used by `"scaled"`).
+#' @param greeks `FALSE` gives the value alone, `NA` in the Greek columns, and is much faster for a grid (the lattice is not recorded
+#'   for automatic differentiation).
+#' @export
+compute_carried_reset_convertible_bond_value <- function(bond, settlement_date, exercise, exercise_dates, reset_dates, rule = "downward_only",
+                                                         conversion_price_ratio, initial_conversion_price, lower_conversion_price = 0,
+                                                         upper_conversion_price = Inf, spot, rate, dividend_yield, volatility, credit_spread,
+                                                         steps = 200L, method = "grid", price_nodes = 40L, greeks = TRUE,
+                                                         callabilities = NULL, day_count = "actual_365_fixed", on_error = "stop") {
+  if (!inherits(bond, "rmql_bond")) stop("`bond` must come from create_fixed_rate_bond().", call. = FALSE)
+  calls <- as_callabilities(callabilities)
   i <- tibble(spot = as.numeric(spot), rate = as.numeric(rate), dividend_yield = as.numeric(dividend_yield), volatility = as.numeric(volatility),
               credit_spread = as.numeric(credit_spread), steps = as.integer(steps))
-  rows <- checked(.Call(wrap__compute_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count), reset, conversion_ratio, alpha, lower, upper,
-                as.character(exercise), as_serial(exercise_dates), as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price),
-                as.character(calls$price_type), as.numeric(calls$trigger), i$spot, i$rate, i$dividend_yield, i$volatility, i$credit_spread, i$steps))
+  rows <- checked(.Call(wrap__compute_carried_reset_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count),
+                        as.character(exercise), as_serial(exercise_dates), as_serial(reset_dates), as.character(rule), as.numeric(conversion_price_ratio),
+                        as.numeric(lower_conversion_price), as.numeric(upper_conversion_price), as.numeric(initial_conversion_price), as.character(method),
+                        as.integer(price_nodes), isTRUE(greeks), as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price), as.character(calls$price_type),
+                        as.numeric(calls$trigger), i$spot, i$rate, i$dividend_yield, i$volatility, i$credit_spread, i$steps))
   rows <- finish_rows(rows, on_error)
   values <- tibble::as_tibble(rows[setdiff(names(rows), "error")])
   tibble::as_tibble(c(as.list(i[setdiff(names(i), "steps")]), list(steps = i$steps), as.list(values), list(error = rows$error)))
