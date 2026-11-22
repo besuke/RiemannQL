@@ -9,7 +9,7 @@ suppressMessages({ library(tibble); library(dplyr); library(purrr) })
 out_dir <- file.path("tests", "golden")
 fmt <- function(x) sprintf("%.17g", x)
 
-chapter <- readLines("../coral-book/part2_quantive_riemann/ch08_early_redemption_models.qmd", encoding = "UTF-8")
+chapter <- readLines("../Coral-Book/part2_quantive_riemann/ch08_early_redemption_models.qmd", encoding = "UTF-8")
 chunk <- function(label, stop_at = NULL) {
   start <- which(chapter == paste0("#| label: ", label))
   end <- start + which(startsWith(chapter[(start + 1):length(chapter)], "```"))[1]

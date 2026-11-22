@@ -13,7 +13,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | `Carmine-Studio` | Carmine-Studio『エンタープライズ金融モデル』（旧 LagrangeFinLab）。React＋R サーバー（httpuv）。画面 8081、R API 8787 | besuke/Carmine-Studio | **クライアント** |
 | `InfragoQuant` | Infrago Quant（旧 QuantLet）。Curie の後継の業務 Web アプリ。画面 8091、R API 8790 | besuke/infrago（旧 infrago-quant。公開か非公開かは `InfragoQuant/HANDOVER.md` を見る） | **クライアント** |
 | `Crimson` | Crimson Proof『Leanから見た金融数学』（旧 LagrangeAcademy）。Quarto＋Lean 4。R は `R/utility_LAD.R` だけから呼ぶ | besuke/Crimson（公開） | **クライアント**。QuantLib を一切使わない・言及しない |
-| `coral-book` | Coral-Book『金融工学の応用基礎』（旧 LagrangeFinance）。照合の基準 | besuke/coral-book | **変更しない** |
+| `Coral-Book` | Coral-Book『金融工学の応用基礎』（旧 LagrangeFinance）。照合の基準 | besuke/Coral-Book | **変更しない** |
 | `GaussQuant`、`Curie` | 既存の R の計算・業務ツール。照合の基準 | besuke/GaussQuant ほか | **変更しない** |
 | `QuantLib_tidy`、`LeanStudy`、`TypeScriptStudy` | 学習・試作 | | |
 
@@ -129,7 +129,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | Rust の中核 `rmql::ois::compute_ois_swap_dates` | **完了**。QuantLib 1.42 `MakeOIS` と 13,520 件で照合し、成功 13,514 件は完全一致、失敗 6 件も同じ（`docs/spec_ois_swap.md` 7 章）。コミット済み（`d8c5ba7`） |
 | R の関数 `compute_ois_swap_dates(index, evaluation_date, tenor, settlement_days = 2L, on_error)` | **実装とテストは完了、コミット済み（2026-11-18）**。ラッパーは `src/rust/src/lib.rs`、R 関数は `R/ois_swaps.R`、ヘルプは `man/compute_ois_swap_dates.Rd`、テストは `tests/testthat/test-ois-swap-dates.R`。R のテスト全体は 156 件成功、Rust は 278 件成功、`cargo clippy --all-targets` は通る |
 | Carmine-Studio の置き換え | **未了**。`../Carmine-Studio/server/R/tona_ois_model.R` の `TONA_SWAP_DATES` を `compute_ois_swap_dates("tonar", evaluation_date, "7Y")` に置き換える。結果は同じ日付（開始 2026-09-14、満期 2033-09-14）のはず。置き換えたら `reconciliation/RECONCILIATION.md` 6 章 #1 を「解消」に更新する（クライアントの会話で、頼まれたときだけコミット） |
-| 版と公開 | **0.4.0 は公開済み（2026-11-20）**。リポジトリの `DESCRIPTION` と Cargo は 0.4.1（2026-11-21 に揃えた）で、0.4.1 の公開は未確認。Carmine-Studio が `stopifnot(packageVersion("rmql") >= "0.4.0")` を足したかは未確認 |
+| 版と公開 | **0.4.0 は公開済み（2026-11-20）**。リポジトリの `DESCRIPTION` と Cargo は **0.5.0**（2026-11-22。P16 のルックバック・転換社債・MSCB を足したため。この PC の既定のライブラリーに 1 回入れた。GitHub の Release と gh-pages への公開は未了）。Carmine-Studio の `server/server.R` は、`rmql` 0.5.0 以上を要求する |
 
 **注意**：
 
@@ -159,7 +159,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 
 **配布（`docs/spec_r.md` 8 章）**：
 
-- 公開済みの最新は 0.4.0（2026-11-20）。リポジトリは 0.4.1（公開は未確認）。以下の記述は 0.3.4 の時点のもの。
+- 公開済みの最新は 0.4.0（2026-11-20）。リポジトリは 0.5.0（公開は未了）。以下の記述は 0.3.4 の時点のもの。
   - **Windows の入れ方（Rust なし）**：`install.packages("rmql", repos = c("https://besuke.github.io/RiemannQL", "https://cloud.r-project.org"))`。公開した URL から、Rust を外した PATH で導入と smoke test 34 項目を確認済み（`dist/smoke_from_pages_0.3.4.log`）。
   - `remotes::install_github("besuke/RiemannQL")`（`subdir` なし）：`DESCRIPTION` をリポジトリの直下に置いた（2026-11-19、`docs/spec_r.md` 8.9）。remotes はリポジトリ全体を取るので、中核の `crates/rmql` が隣にあり、`configure` はそれを確かめるだけである。Rust と Rtools が要る。Rust がなければ `configure.win` が上の入れ方を示して止まる。旧構成（`crates/rmql-r` に `DESCRIPTION`、`subdir` が必要、`RemoteSha` で中核を取る）は廃止した。
   - Windows zip と tar.gz は GitHub Releases の `v0.3.4` にもある。
@@ -189,7 +189,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 2. 準備：R 4.6、Rtools 4.5、Rust（`rustup target add x86_64-pc-windows-gnu`）、Claude Code。R パッケージだけ使うなら、上の `install.packages(...)` の 1 行で足りる。
 3. 起動：`rmql-Claude.bat`（または `rmql-Claude.ps1`）を実行する。この PC に会話の履歴があれば続きから、なければ新しい会話で始まる。新しい会話では、**このファイル（CLAUDE.md）の「まず読む」から続ける**。
 4. 会話の履歴と記憶は PC ごとにあり、git には入らない。引継ぎはこのファイルが担う。作業を切るときは、ここを更新してコミットする。
-5. クライアント（`../Carmine-Studio`、`../InfragoQuant`、`../Crimson`）と参照元（`../coral-book`、`../GaussQuant`）は、同じ親フォルダーに clone する。
+5. クライアント（`../Carmine-Studio`、`../InfragoQuant`、`../Crimson`）と参照元（`../Coral-Book`、`../GaussQuant`）は、同じ親フォルダーに clone する。
 
 ## QuantLib との比較資料（`comparison/`）
 
