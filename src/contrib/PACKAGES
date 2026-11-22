@@ -1,8 +1,9 @@
 Package: rmql
-Version: 0.4.1
+Version: 0.5.0
 Depends: R (>= 4.1.0)
 Imports: purrr, tibble
 Suggests: testthat (>= 3.0.0)
 License: MIT + file LICENSE | Apache License 2.0
-MD5sum: bb66e970da875464b497c2445b78c098
+MD5sum: f7980d9f73649983f8ca978925d98bfe
 NeedsCompilation: yes
+File: rmql_0.5.0.tar.gz
