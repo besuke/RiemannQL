@@ -1,6 +1,6 @@
 # ルックバック・転換社債・MSCB の仕様案（P16、仮）
 
-【2026-11-22。Stage 1 は実装と照合が済んだ。Stage 2〜4 は設計案で、コードはまだない】
+【2026-11-22。Stage 1 と Stage 2 は実装と照合が済んだ。Stage 3〜4 は設計案で、コードはまだない】
 
 経路依存の商品を、「明日からの価値を計算するために、今日までの何を覚えておくか」（持ち越す**状態**）という一つの問いで並べ、契約の構造を使って状態の次元を落とす。対象は、ルックバック（Stage 1）、固定転換価額の転換社債（CB、Stage 2）、転換時にリセットする MSCB（Stage 3）、転換価額を持ち越す MSCB（Stage 4）である。
 
@@ -27,7 +27,7 @@
 
 - ほかに、部分監視のルックバック（`...Partial...`）、`CallabilitySchedule`、`SoftCallability`、`DividendSchedule`、ゼロクーポンと変動利付の転換社債のクラスがある。
 - **R のパッケージに、離散監視のルックバックのエンジンはない**。離散監視の基準は、連続監視への収束と、独立なモンテカルロで作る。
-- 転換社債のエンジンが Tsiveriotis–Fernandes（TF）の分解を使うことは、記憶によるもので、**未確認**（ソースが手元にない）。実装の前に、QuantLib の `DiscretizedConvertible` を読み、クーポン、コールとプットの順序、転換とコールの優先、ソフトコールの条件などの規約を、ソースから写す。
+- 転換社債のエンジンの規約は、QuantLib v1.42 のソースを読んで確認した（4 章）。2 成分の分解ではなく、価値と転換確率を持つ格子である。
 
 ## 3. Stage 1：ルックバック【実装済み・実行照合済み（2026-11-22）】
 
@@ -76,25 +76,46 @@
 
 **未了・制約**：連続性の補正（Broadie–Glasserman–Kou 型、文献の内容は未確認）は入れていない。木の誤差は $1/\sqrt{\text{段数}}$ で遅い（段数 6400 で連続監視との差が、コールで約 0.65%、プットで約 0.9%）。離散監視の木の速さは、まだ測っていない。
 
-## 4. Stage 2：固定転換価額の CB
+## 4. Stage 2：固定転換価額の CB【実装済み・実行照合済み（2026-11-22）】
 
-**TF の分解**【設計案。規約は QuantLib のソースから写す】：価値を、株式の部分 $U$（無リスク金利 $r$ で割り引く）と、現金の部分 $B$（$r + s$、$s$ は信用スプレッド）に分ける。木の各節点で、保有した場合の継続価値を、$U$ と $B$ に別々の割引で求める。転換が最適なら $U = \kappa S$、$B = 0$。コールやプットの行使は、規則（転換とコールの優先など）に従って、$B$ の側に現金として入る。クーポンは $B$ に入る。
+実装は `crates/rmql/src/convertible.rs`、R の入口は `R/convertible.R`（`compute_convertible_bond_value`）、照合用は `tools/golden/p16_convertible.R`（`tests/golden/convertible_bonds.csv`、300 行）。方法と規約は、QuantLib v1.42（`41b0e146`）のソース（`binomialconvertibleengine.hpp`、`discretizedconvertible.{hpp,cpp}`、`tflattice.hpp`、`convertiblebonds.cpp`）を読んで写した（著作権表示は `THIRD_PARTY_NOTICES`）。
 
-**入力**：額面 $F$、転換比率 $\kappa$（1 枚あたりの株数）、クーポン（既存の固定利付債のスケジュール `instruments::fixed_rate_bond` を使う）、転換の方式（ヨーロピアン、アメリカン、バミューダン）、コールとプットの日付と価格、信用スプレッド $s$、一定の $r$、$q$、$\sigma$。**対象外**（初期版）：配当の離散、ソフトコール条件、金利の確率過程。
+**初版の案の修正**：QuantLib の TF の格子は、株式の部分と現金の部分の 2 成分に分ける形ではない。節点ごとに、債券全体の価値 $V$ と、転換に至る確率 $p$ の 2 本を持つ。
 
-**公開 API の案**：
+**格子と割引**【ソースで確認】：
+
+- Cox–Ross–Rubinstein の木（`options.rs` の `crr_tree` と同じ確率 $p_u = \tfrac12 + \tfrac12 \cdot \text{ドリフト} / dx$）。時間は、決済日から最後の行使日までを一様に `steps` 段に分ける。木の定数は、一定の $r$、$q$、$\sigma$。
+- 節点の割引率は、$p\,r + (1 - p)(r + s)$（$s$ は信用スプレッド）。1 段戻る式は、**単純割引** $V_j \leftarrow p_d V_j / (1 + \text{率}_j \Delta t) + p_u V_{j+1} / (1 + \text{率}_{j+1} \Delta t)$（指数ではない。率は 1 段先の節点のもの）。$p$ も同じ重みで戻す。
+- 各節点の時刻での調整は、**コール・プット → クーポン → 転換**の順。転換は、$V \le \kappa S$ なら $V = \kappa S$、$p = 1$。新しい $p$ から割引率を作るのは、その時刻の調整の**前**なので、その時刻の転換は、その時刻の率の配列に反映されない（次の 1 段が使う率は、調整前のもの）。最終の時刻だけは、調整のあとに率を作る。
+- 満期の初期値は償還額。満期のクーポンは、償還額に足してから、転換を判定する。
+- クーポン、コール、行使の日付は、最も近い格子点に置く（同じ距離なら早い点）。クーポンは決済日**より後**のものだけを使う。コールが決済日以前なら捨てる。木の終わりは、最後の行使日（債券の満期より前でもよく、それより後のクーポンは最後の点に置く）。
+- コール：ソフトコール（`trigger`）なら、株価が `償還額 / 転換比率 × trigger` 以上の節点で、$V = \min(\max(\text{価格}, \kappa S), V)$。トリガーなしで、その時刻に転換できるなら、同じ式を全節点で。転換できない時刻は $V = \min(\text{価格}, V)$。プットは $V = \max(V, \text{価格})$。クリーン価格のコールは、コール日の経過利子を足して、ダーティにする。
+
+**入力**：`ConvertibleTerms`（償還額、`ConversionTerms::Fixed { ratio }`、`ConversionExercise`（ヨーロピアン・アメリカン・バミューダン）、クーポン（時刻と額）、`Callability`（時刻、種類、価格、トリガー））と、`ConvertibleInputs`（現物、$r$、$q$、$\sigma$、信用スプレッド）。時刻は決済日からの年数。債券の条件と日付からは、`create_convertible_terms(bond, settlement, day_count, ...)` が作る。**対象外**（初期版）：離散の配当、金利の確率過程、CRR 以外の木。QuantLib と違い、段数は 2 以上が要る。
+
+**公開 API**：
 
 | | Rust | R |
 |---|---|---|
-| 価値とグリークス | `compute_convertible_bond_value<T: Operand>(&ConvertibleTerms, &ConvertibleInputs<T>, steps)` | `compute_convertible_bond_value(bond, spot, rate, dividend_yield, volatility, credit_spread, steps)` |
+| 価値 | `compute_convertible_value<T: Operand>(&ConvertibleTerms, &ConvertibleInputs<T>, steps)` | `compute_convertible_bond_value(bond, settlement_date, exercise, exercise_dates, conversion_ratio, spot, rate, dividend_yield, volatility, credit_spread, steps, callabilities, day_count, on_error)` |
+| グリークス | `compute_convertible_greeks`（`delta`、`gamma`、`vega`、`rho`、`dividend_rho`、`credit_spread_sensitivity`） | 同じ関数の戻り値の列 |
 
-グリークス（デルタ、ガンマ、ベガ、ロー、信用スプレッド感応度 CS01）は、`Operand` による自動微分で、価格と一緒に返す。
+`delta` と `gamma` は、格子の最初の 1・2 段の値から（Hull の式、`options.rs` の木と同じ）。ほかは自動微分。QuantLib は価値だけを返す。現物を格子の間隔より細かくずらした差分は、転換とコールが節点で切り替わるため、ばらつく（実測：コールつき・アメリカン、段数 400 で、ずらし幅 0.05〜2 のデルタが 0.74〜0.75、最初の段の差分は 0.797、幅 5 の差分は 0.799）。
 
-**検査**：
+**速さ**【実測。2026-11-22、R の windows-gnu ビルド、アメリカン、コールとプットつき、価値とグリークスを一緒に。この PC での値】：100 段 0.02 秒、300 段 0.08 秒、1000 段 0.8 秒、3000 段 10〜19 秒。段数の 2 乗で増える（自動微分の記録が段数の 2 乗の大きさ）。グリークスなしの価値だけの速さは、まだ測っていない。
 
-- QuantLib の `BinomialCRRConvertibleEngine` と、同じ段数で比べる（木と木なので、近い値になるはずで、許容誤差は実測で決める）。クーポン、転換方式、コールとプットを組み合わせた複数の条件で行う。
-- 極限：転換比率 $\to 0$ で、$r + s$ で割り引いた普通債に一致する。信用スプレッド 0、クーポンなし、ヨーロピアン、コールなしなら、$F e^{-rT} + \kappa\, \mathrm{call}(S, F/\kappa, \dots)$ の閉じた式に一致する（段数を増やした収束で確かめる）。
-- 性質：$S$ について単調に増加、凸。
+**QuantLib との違い（浮動小数点の端数）**【実行照合済み】：QuantLib の `TimeGrid(end, steps)` は、点を $\Delta t \times i$（$\Delta t = \text{end}/\text{steps}$）で作るので、最後の点が `end` より 1 ulp 小さいことがある。アメリカン型の転換の判定は、最後の時刻で `time() <= 最後の行使日の格子点` と書かれているため、その場合に**満期での転換が許されない**。段数によって起きる（300 行のうち 9 行、すべてアメリカンで段数 50 か 100）。rmql の公開関数は、満期でも転換できる。QuantLib の挙動は、`compute_convertible_value_like_quantlib`（ドキュメント非表示）で再現し、照合に使う。端数の影響を受ける行では、2 つの値は、**どちらの向きにも**、最大 0.67% 違う：満期で転換できると、その節点の転換確率が 1 でなくなり、前の段の割引率（転換確率で混ぜる）が上がって、値が下がることがある（この格子の値は、転換する権利について単調ではない）。
+
+**検査結果**：
+
+| 検査 | 基準 | 結果 |
+|---|---|---|
+| 300 行：ヨーロピアン 107、アメリカン 90、バミューダン 103。コール・プット・ソフトコール・クリーン価格のコール、段数 20〜300 | QuantLib 1.42（`ConvertibleFixedCouponBond`、`BinomialCRRConvertibleEngine`） | 端数を再現した版は、300 行すべてで相対 7.8e-12 以内。公開関数は、端数の影響のない 291 行で 7.8e-12 以内、影響のある 9 行で最大 0.67%（`tests/golden_convertible.rs`） |
+| R の入口：債券から項を作る、クリーン価格の経過利子、バミューダン | QuantLib R の 3 つの値 | 相対 1e-9 以内（`tests/testthat/test-convertible.R`） |
+| 極限：転換比率が極小 | 割引率 $r + s$ の単純割引の和（厳密な式） | 相対 1e-10 以内 |
+| 極限：信用スプレッド 0、クーポンなし、ヨーロピアン、コールなし | 閉じた式 $F e^{-rT} + \kappa\, \mathrm{call}(S, F/\kappa)$（2000 段） | 相対 3e-3 以内（木と単純割引の誤差） |
+| 性質 | 現物について増加、信用スプレッドについて減少、転換権の価値は非負、コールは価値を下げ、プットは上げ、ソフトコールはコールより弱い | 合格 |
+| グリークス | ベガ・ロー・信用スプレッド感応度は中心差分と一致、デルタは最初の段の差分と幅 5 の差分が一致 | 合格 |
 
 ## 5. Stage 3：転換時リセットの MSCB（1 次元）
 
@@ -149,7 +170,7 @@ ResetRule::DownwardOnly { alpha, k_min }          // K+ = min(K-, max(k_min, alp
 |---|---|---|
 | 0 | この文書の確認 | 修正した本書 |
 | 1 | Stage 1：連続監視（解析解）、離散監視（相似縮約の木）、グリークス【済み】 | `crates/rmql/src/lookback.rs`、R `R/lookback.R`、`tools/golden/p16_lookback.R` |
-| 2 | Stage 2：固定 CB（QuantLib のソースを読んでから） | `convertible.rs`、`tools/golden/p16_convertible.R` |
+| 2 | Stage 2：固定 CB【済み】 | `convertible.rs`、`R/convertible.R`、`tools/golden/p16_convertible.R` |
 | 3 | Stage 3：`ConversionTerms::Reset` | Stage 2 の拡張 |
 | 4 | Stage 4：2 次元と 1 次元の縮約、速さの比 | `convertible.rs` の拡張 |
 
@@ -157,7 +178,7 @@ ResetRule::DownwardOnly { alpha, k_min }          // K+ = min(K-, max(k_min, alp
 
 ## 9. 未確認と判断してほしい点
 
-1. QuantLib の転換社債エンジンの規約（TF の細部）は、ソースを読んでから確定する（Stage 2 の前）。
+1. （済）QuantLib の転換社債エンジンの規約は、ソースを読んで確定した（4 章）。
 2. 離散監視の木で、連続性の補正（Broadie–Glasserman–Kou 型）を入れるか（監視日は最も近い段に置く形で実装済み）。
 3. Stage 4 の 2 次元の格子で、$K$ 軸の補間の方式（線形か 3 次か）。精度と単調性のどちらを優先するか。
 4. 公開関数の名前（`compute_lookback_option_value`、`compute_convertible_bond_value` など）と、段階の番号（P16）は仮である。

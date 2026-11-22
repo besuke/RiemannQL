@@ -20,6 +20,7 @@ use rmql::hull_white::{
     SwaptionFlows,
 };
 use rmql::instruments::{FixedRateBond, FixedRateBondSpec};
+use rmql::convertible::{self, CallabilityKind, ConversionTerms, ConvertibleInputs, DatedCallability, DatedExercise};
 use rmql::lookback::{self, LookbackGreeks, LookbackInputs};
 use rmql::longstaff_schwartz::{
     self, CalibrationPaths, FewInTheMoney, LongstaffSchwartzSettings, PathSequence,
@@ -2920,6 +2921,97 @@ fn compute_discrete_lookback_option_value(
 }
 #[extendr]
 #[allow(clippy::too_many_arguments)]
+fn compute_convertible_bond_value(
+    bond: ExternalPtr<FixedRateBond>,
+    settlement_date: i32,
+    day_count: &str,
+    conversion_ratio: f64,
+    exercise: &str,
+    exercise_dates: Vec<i32>,
+    call_dates: Vec<i32>,
+    call_kinds: Vec<String>,
+    call_prices: Vec<f64>,
+    call_price_types: Vec<String>,
+    call_triggers: Vec<f64>,
+    spot: Vec<f64>,
+    rate: Vec<f64>,
+    dividend_yield: Vec<f64>,
+    volatility: Vec<f64>,
+    credit_spread: Vec<f64>,
+    steps: Vec<i32>,
+) -> List {
+    let terms = || -> Core<convertible::ConvertibleTerms> {
+        same_length(&[
+            ("call_dates", call_dates.len()),
+            ("call_kinds", call_kinds.len()),
+            ("call_prices", call_prices.len()),
+            ("call_price_types", call_price_types.len()),
+            ("call_triggers", call_triggers.len()),
+        ])?;
+        let dates = exercise_dates.iter().map(|&d| date(d)).collect::<Core<Vec<_>>>()?;
+        let dated = match (exercise, dates.as_slice()) {
+            ("european", [d]) => DatedExercise::European(*d),
+            ("american", [start, end]) => DatedExercise::American { start: *start, end: *end },
+            ("bermudan", all) if !all.is_empty() => DatedExercise::Bermudan(all.to_vec()),
+            ("european" | "american" | "bermudan", _) => {
+                return Err(rmql::Error::InvalidInput {
+                    reason: format!("a {exercise} exercise takes {}, not {} dates", if exercise == "european" { "1 date" } else if exercise == "american" { "2 dates (start, end)" } else { "at least 1 date" }, dates.len()),
+                })
+            }
+            (other, _) => return Err(rmql::Error::InvalidInput { reason: format!("unknown exercise `{other}`") }),
+        };
+        let calls = (0..call_dates.len())
+            .map(|i| {
+                Ok(DatedCallability {
+                    date: date(call_dates[i])?,
+                    kind: match call_kinds[i].as_str() {
+                        "call" => CallabilityKind::Call,
+                        "put" => CallabilityKind::Put,
+                        other => return Err(rmql::Error::InvalidInput { reason: format!("unknown callability `{other}`") }),
+                    },
+                    price: call_prices[i],
+                    price_type: names::parse_price_type(&call_price_types[i])?,
+                    trigger: if call_triggers[i].is_nan() { None } else { Some(call_triggers[i]) },
+                })
+            })
+            .collect::<Core<Vec<_>>>()?;
+        convertible::create_convertible_terms(&bond, date(settlement_date)?, &names::parse_day_count(day_count)?, ConversionTerms::Fixed { ratio: conversion_ratio }, &dated, &calls)
+    };
+    let terms = match terms() {
+        Ok(t) => t,
+        Err(e) => return failure(e),
+    };
+    if let Err(e) = same_length(&[
+        ("spot", spot.len()),
+        ("rate", rate.len()),
+        ("dividend_yield", dividend_yield.len()),
+        ("volatility", volatility.len()),
+        ("credit_spread", credit_spread.len()),
+        ("steps", steps.len()),
+    ]) {
+        return failure(e);
+    }
+    let (columns, error) = table(spot.len(), |i| {
+        let g = convertible::compute_convertible_greeks(
+            &terms,
+            &ConvertibleInputs { spot: spot[i], rate: rate[i], dividend_yield: dividend_yield[i], volatility: volatility[i], credit_spread: credit_spread[i] },
+            size(steps[i], "steps[i]")?,
+        )?;
+        Ok([g.value, g.delta, g.gamma, g.vega, g.rho, g.dividend_rho, g.credit_spread_sensitivity])
+    });
+    list!(
+        value = columns[0].clone(),
+        delta = columns[1].clone(),
+        gamma = columns[2].clone(),
+        vega = columns[3].clone(),
+        rho = columns[4].clone(),
+        dividend_rho = columns[5].clone(),
+        credit_spread_sensitivity = columns[6].clone(),
+        error = error
+    )
+}
+#[extendr]
+#[allow(clippy::too_many_arguments)]
 fn compute_american_approximation_value(
     method: Vec<String>,
     option_type: Vec<String>,
@@ -4755,6 +4847,7 @@ extendr_module! {
     fn compute_barrier_option_value;
     fn compute_binomial_option_value;
     fn compute_lookback_option_value;
+    fn compute_convertible_bond_value;
     fn compute_discrete_lookback_option_value;
     fn compute_american_approximation_value;
     fn compute_forward_option_value;
