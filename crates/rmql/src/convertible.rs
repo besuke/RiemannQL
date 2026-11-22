@@ -236,8 +236,19 @@ impl ConvertibleTerms {
 impl<T: Operand> ConvertibleInputs<T> {
     fn check(&self) -> Result<(), Error> {
         for (name, x) in [("spot", self.spot), ("volatility", self.volatility)] {
-            if !(x.primal() > 0.0) {
-                return invalid(format!("{name} must be positive, not {}", x.primal()));
+            let x = x.primal();
+            if !(x > 0.0) || !x.is_finite() {
+                return invalid(format!("{name} must be positive and finite, not {x}"));
+            }
+        }
+        for (name, x) in [
+            ("rate", self.rate),
+            ("dividend_yield", self.dividend_yield),
+            ("credit_spread", self.credit_spread),
+        ] {
+            let x = x.primal();
+            if !x.is_finite() {
+                return invalid(format!("{name} must be finite, not {x}"));
             }
         }
         Ok(())
@@ -319,11 +330,12 @@ impl<'a, T: Operand> Engine<'a, T> {
         let dx = volatility * dt.sqrt();
         let drift = (rate - dividend_yield - volatility * volatility * 0.5) * dt;
         let pu = drift / dx * 0.5 + 0.5;
-        if pu.primal() > 1.0 {
-            return invalid(format!("probability ({}) higher than one", pu.primal()));
-        }
-        if pu.primal() < 0.0 {
-            return invalid(format!("negative ({}) probability", pu.primal()));
+        // `!contains` also rejects NaN
+        if !(0.0..=1.0).contains(&pu.primal()) {
+            return invalid(format!(
+                "the probability of an up step ({}) must be in [0, 1]",
+                pu.primal()
+            ));
         }
         let pd = -pu + 1.0;
         let step = |time: f64| closest_step(time, dt, steps);
@@ -957,6 +969,61 @@ mod tests {
             ..good
         };
         assert!(compute_convertible_value(&put_with_trigger, &i, 100).is_err());
+    }
+
+    #[test]
+    fn nonfinite_market_inputs_are_errors() {
+        let terms = terms(1.0, 5, 2.0, ConversionExercise::European(5.0));
+        let valid = inputs(100.0, 0.03, 0.01, 0.25, 0.02);
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for (name, input) in [
+                ("spot", ConvertibleInputs { spot: x, ..valid }),
+                (
+                    "volatility",
+                    ConvertibleInputs {
+                        volatility: x,
+                        ..valid
+                    },
+                ),
+                ("rate", ConvertibleInputs { rate: x, ..valid }),
+                (
+                    "dividend_yield",
+                    ConvertibleInputs {
+                        dividend_yield: x,
+                        ..valid
+                    },
+                ),
+                (
+                    "credit_spread",
+                    ConvertibleInputs {
+                        credit_spread: x,
+                        ..valid
+                    },
+                ),
+            ] {
+                let error = compute_convertible_value(&terms, &input, 100)
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains(&format!("{name} must")) && error.contains("finite"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_up_probability_that_overflows_to_nan_is_an_error() {
+        let terms = terms(1.0, 5, 2.0, ConversionExercise::European(5.0));
+        // Both the rate difference and the squared volatility overflow, so the drift is NaN.
+        let input = inputs(100.0, f64::MAX, -f64::MAX, f64::MAX, 0.02);
+        let error = compute_convertible_value(&terms, &input, 100)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("probability") && error.contains("NaN"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -87,14 +87,21 @@ impl<T: Operand> LookbackInputs<T> {
             ("volatility", self.volatility),
             ("time", self.time),
         ] {
-            if !(x.primal() > 0.0) {
-                return invalid(format!("{name} must be positive, not {}", x.primal()));
+            let x = x.primal();
+            if !(x > 0.0) || !x.is_finite() {
+                return invalid(format!("{name} must be positive and finite, not {x}"));
             }
         }
-        if strike == LookbackStrike::Fixed && !(self.strike.primal() > 0.0) {
+        for (name, x) in [("rate", self.rate), ("dividend_yield", self.dividend_yield)] {
+            let x = x.primal();
+            if !x.is_finite() {
+                return invalid(format!("{name} must be finite, not {x}"));
+            }
+        }
+        let strike_value = self.strike.primal();
+        if strike == LookbackStrike::Fixed && (!(strike_value > 0.0) || !strike_value.is_finite()) {
             return invalid(format!(
-                "strike must be positive, not {}",
-                self.strike.primal()
+                "strike must be positive and finite, not {strike_value}"
             ));
         }
         let (spot, extremum) = (self.spot.primal(), self.running_extremum.primal());
@@ -639,6 +646,48 @@ mod tests {
         assert!(d(&[1.0, 0.5], 50).is_err());
         assert!(d(&[0.5, 1.5], 50).is_err());
         assert!(d(&[0.0, 1.0], 50).is_err());
+    }
+
+    #[test]
+    fn nonfinite_market_inputs_are_errors() {
+        let valid = inputs(100.0, 110.0, 100.0, 0.03, 0.01, 0.2, 1.0);
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for (name, input) in [
+                ("spot", LookbackInputs { spot: x, ..valid }),
+                (
+                    "running_extremum",
+                    LookbackInputs {
+                        running_extremum: x,
+                        ..valid
+                    },
+                ),
+                ("strike", LookbackInputs { strike: x, ..valid }),
+                (
+                    "volatility",
+                    LookbackInputs {
+                        volatility: x,
+                        ..valid
+                    },
+                ),
+                ("time", LookbackInputs { time: x, ..valid }),
+                ("rate", LookbackInputs { rate: x, ..valid }),
+                (
+                    "dividend_yield",
+                    LookbackInputs {
+                        dividend_yield: x,
+                        ..valid
+                    },
+                ),
+            ] {
+                let error = compute_lookback_value(LookbackStrike::Fixed, OptionType::Call, &input)
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains(&format!("{name} must")) && error.contains("finite"),
+                    "{error}"
+                );
+            }
+        }
     }
 
     #[test]

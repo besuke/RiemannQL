@@ -99,7 +99,7 @@ QuantLib Guide（https://www.quantlibguide.com/ 、全 39 ページ、2026-11-04
 | BermudanSwaption | G2、Hull–White、Black–Karasinski の木・有限差分、校正 | 一部再現 | G2、Black–Karasinski、木・有限差分のエンジン（rmql は状態格子） |
 | CallableBonds | Hull–White の木でコール債 | 一部再現 | QuantLib の木と rmql の状態格子は方式が違う。債券の規約からの変換 |
 | Repo | 債券のフォワード | 未対応 | 債券フォワード |
-| ConvertibleBonds | 転換社債 | 未対応 | |
+| ConvertibleBonds | 固定利付転換社債を複数の二項木で評価 | 一部再現 | 固定利付債の CRR 木、ヨーロピアン・アメリカン・バミューダン、コール・プット・ソフトコールに対応（[P16 Stage 2](spec_lookback_convertible.md) 4 章）。変動利付、CRR 以外の木、離散配当は未対応。公開関数では、QuantLib の時刻丸めでアメリカンの満期転換が省かれるケースに価格差が出る |
 | AsianOption | アジア型 | 未対応 | |
 | DiscreteHedging | 離散ヘッジのシミュレーション | 未対応 | |
 | Replication | バリアの静的複製 | 一部再現 | European とバリアの解析解はある。複製のポートフォリオは R で組める見込み |
@@ -120,7 +120,7 @@ QuantLib Guide（https://www.quantlibguide.com/ 、全 39 ページ、2026-11-04
 5. **債券ヘルパーのブートストラップと線形ゼロ補間**。Guide 34、Examples Bonds が使う。**実装済み**（`bootstrap_bond_curve`、`create_zero_spreaded_curve(spread_dates = )`）。
 6. **American オプションの近似式**（Barone-Adesi–Whaley、Bjerksund–Stensland）。Examples EquityOption、LagrangeFinance II-4.5 が使う。**実装済み**（`compute_american_approximation_value`）。
 
-後回しにするもの：当てはめカーブ、OIS 変動利付債、lookback・lockout、先物ヘルパー、Heston、インフレ、クロスカレンシー、転換社債、アジア型、G2、CVA。
+後回しにするもの：当てはめカーブ、OIS 変動利付債、lookback・lockout、先物ヘルパー、Heston、インフレ、クロスカレンシー、変動利付転換社債、アジア型、G2、CVA。
 
 ## 6. 作ったサンプル
 

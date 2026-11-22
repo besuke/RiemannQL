@@ -96,8 +96,10 @@ impl MscbTerms {
                 k_min,
                 k_max,
             } => {
-                if !(k_max >= k_min) {
-                    return invalid(format!("the upper conversion price {k_max} must not be below the lower one {k_min}"));
+                if !(k_max > 0.0) || !(k_max >= k_min) {
+                    return invalid(format!(
+                        "the upper conversion price {k_max} must be positive and at least the lower one {k_min}"
+                    ));
                 }
                 (alpha, k_min)
             }
@@ -773,6 +775,16 @@ mod tests {
             GRID
         )
         .is_err());
+        for k_max in [0.0, -1.0, f64::NAN] {
+            let rule = ResetRule::Both {
+                alpha: 0.9,
+                k_min: 0.0,
+                k_max,
+            };
+            let invalid = terms(rule, vec![1.0], european.clone());
+            let error = value(&invalid, GRID).unwrap_err().to_string();
+            assert!(error.contains("upper conversion price"), "{error}");
+        }
         assert!(value(&good, MscbMethod::Grid { price_nodes: 1 }).is_err());
         // the scaled lattice has no limits to give
         assert!(value(

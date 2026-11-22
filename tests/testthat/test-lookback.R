@@ -18,6 +18,14 @@ test_that("the value at zero drift is finite, and continuous in the drift", {
   expect_lt(abs(at(0.04) - at(0.0399)), 1e-3 * at(0.04))
 })
 
+test_that("a fixed-strike lookback rejects a missing strike", {
+  expect_error(compute_lookback_option_value("fixed", "call", 100, 100, NA_real_, 0.03, 0.01, 0.25, 1),
+               "strike must be positive and finite")
+  expect_error(compute_discrete_lookback_option_value("fixed", "call", 100, 100, NA_real_, 0.03, 0.01, 0.25, 1,
+                                                     monitoring_times = c(0.5, 1), steps = 100L),
+               "strike must be positive and finite")
+})
+
 test_that("a fixed-strike option is a floating-strike one plus a constant", {
   fixed <- compute_lookback_option_value("fixed", "call", 100, 100, 90, 0.03, 0.01, 0.2, 1)$value
   floating <- compute_lookback_option_value("floating", "put", 100, 100, NA, 0.03, 0.01, 0.2, 1)$value

@@ -2834,13 +2834,14 @@ fn lookback_greeks_list(n: usize, f: impl Fn(usize) -> Core<LookbackGreeks>) -> 
         error = error
     )
 }
-/// The inputs of row `i`; a floating strike has no strike, and the spot stands in for it.
-fn lookback_inputs(i: usize, v: [&[f64]; 7]) -> LookbackInputs {
+/// The inputs of row `i`; a floating strike has no strike, and the spot stands in for it. A fixed strike that is missing
+/// stays missing, and is refused.
+fn lookback_inputs(i: usize, v: [&[f64]; 7], strike_type: lookback::LookbackStrike) -> LookbackInputs {
     let [spot, extremum, strike, rate, dividend, volatility, time] = v;
     LookbackInputs {
         spot: spot[i],
         running_extremum: extremum[i],
-        strike: if strike[i].is_nan() { spot[i] } else { strike[i] },
+        strike: if strike_type == lookback::LookbackStrike::Floating && strike[i].is_nan() { spot[i] } else { strike[i] },
         rate: rate[i],
         dividend_yield: dividend[i],
         volatility: volatility[i],
@@ -2874,10 +2875,11 @@ fn compute_lookback_option_value(
         return failure(e);
     }
     lookback_greeks_list(spot.len(), |i| {
+        let strike_type = names::parse_lookback_strike(&lookback_type[i])?;
         lookback::compute_lookback_greeks(
-            names::parse_lookback_strike(&lookback_type[i])?,
+            strike_type,
             names::parse_option_type(&option_type[i])?,
-            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time]),
+            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time], strike_type),
         )
     })
 }
@@ -2911,10 +2913,11 @@ fn compute_discrete_lookback_option_value(
         return failure(e);
     }
     lookback_greeks_list(spot.len(), |i| {
+        let strike_type = names::parse_lookback_strike(&lookback_type[i])?;
         lookback::compute_discrete_lookback_greeks(
-            names::parse_lookback_strike(&lookback_type[i])?,
+            strike_type,
             names::parse_option_type(&option_type[i])?,
-            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time]),
+            &lookback_inputs(i, [&spot, &running_extremum, &strike, &rate, &dividend_yield, &volatility, &time], strike_type),
             &monitoring_times,
             size(steps[i], "steps[i]")?,
         )

@@ -116,13 +116,14 @@ compute_carried_reset_convertible_bond_value <- function(bond, settlement_date, 
                                                          steps = 200L, method = "grid", price_nodes = 40L, greeks = TRUE,
                                                          callabilities = NULL, day_count = "actual_365_fixed", on_error = "stop") {
   if (!inherits(bond, "rmql_bond")) stop("`bond` must come from create_fixed_rate_bond().", call. = FALSE)
+  greeks <- as_flag(greeks)
   calls <- as_callabilities(callabilities)
   i <- tibble(spot = as.numeric(spot), rate = as.numeric(rate), dividend_yield = as.numeric(dividend_yield), volatility = as.numeric(volatility),
               credit_spread = as.numeric(credit_spread), steps = as.integer(steps))
   rows <- checked(.Call(wrap__compute_carried_reset_convertible_bond_value, bond$pointer, as_serial(settlement_date), as.character(day_count),
                         as.character(exercise), as_serial(exercise_dates), as_serial(reset_dates), as.character(rule), as.numeric(conversion_price_ratio),
                         as.numeric(lower_conversion_price), as.numeric(upper_conversion_price), as.numeric(initial_conversion_price), as.character(method),
-                        as.integer(price_nodes), isTRUE(greeks), as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price), as.character(calls$price_type),
+                        as.integer(price_nodes), greeks, as_serial(calls$date), as.character(calls$kind), as.numeric(calls$price), as.character(calls$price_type),
                         as.numeric(calls$trigger), i$spot, i$rate, i$dividend_yield, i$volatility, i$credit_spread, i$steps))
   rows <- finish_rows(rows, on_error)
   values <- tibble::as_tibble(rows[setdiff(names(rows), "error")])

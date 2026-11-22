@@ -59,6 +59,25 @@ test_that("a reset conversion price with equal limits is a fixed ratio", {
   }
 })
 
+test_that("nonfinite market inputs and a NaN up probability are errors", {
+  args <- list(bond = bond(), settlement_date = "2026-11-02", exercise = "european", exercise_dates = "2031-11-02",
+               conversion_ratio = 1.2, spot = 100, rate = 0.03, dividend_yield = 0.01, volatility = 0.25,
+               credit_spread = 0.02, steps = 100L)
+  purrr::walk(c("spot", "volatility", "rate", "dividend_yield", "credit_spread"), function(name) {
+    purrr::walk(c(NA_real_, Inf, -Inf), function(x) {
+      invalid <- args
+      invalid[[name]] <- x
+      expect_error(do.call(compute_convertible_bond_value, invalid), paste0(name, " must.*finite"))
+    })
+  })
+
+  # The market inputs are finite, but the rate difference and squared volatility both overflow.
+  args$rate <- .Machine$double.xmax
+  args$dividend_yield <- -.Machine$double.xmax
+  args$volatility <- .Machine$double.xmax
+  expect_error(do.call(compute_convertible_bond_value, args), "probability.*NaN")
+})
+
 test_that("a European reset without coupons or spread has a closed form, and an American one converts at once above lower / ratio", {
   zero_coupon <- create_fixed_rate_bond(0L, 100, "2026-11-02", "2028-11-02", "1Y", "japan", "unadjusted", "unadjusted", "backward", FALSE, 0,
                                         "actual_365_fixed", "unadjusted", 100)
@@ -130,4 +149,7 @@ test_that("greeks = FALSE gives the same value and no Greeks", {
   expect_equal(without$value, with$value, tolerance = 1e-12)
   expect_true(all(is.na(without[c("delta", "gamma", "vega", "rho", "dividend_rho", "credit_spread_sensitivity")])))
   expect_true(all(is.finite(unlist(with[c("delta", "gamma", "vega", "rho", "credit_spread_sensitivity")]))))
+  purrr::walk(list(NA, 1, "TRUE", logical(), c(TRUE, FALSE)), function(greeks) {
+    expect_error(call(greeks), "greeks.*must be TRUE or FALSE")
+  })
 })
