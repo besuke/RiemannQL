@@ -102,6 +102,45 @@ test_that("the three-factor closed form's derivatives", {
   expect_named(r$curve_sensitivity, c("curve", "date", "time", "d_npv", "npv_per_bp"))
 })
 
+test_that("the cross second derivatives with the spot, by automatic differentiation, agree with four-point differences", {
+  k <- prdc_curves()
+  rho <- c(0.3, -0.2, 0.4)
+  value <- function(spot = 150, sx = 0.11, shift_d = 0, shift_f = 0, second_order = FALSE) {
+    jpy <- if (shift_d == 0) k$jpy else create_zero_spreaded_curve(k$jpy, shift_d, "continuous")
+    usd <- if (shift_f == 0) k$usd else create_zero_spreaded_curve(k$usd, shift_f, "continuous")
+    compute_prdc_three_factor_value(spot, sx, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                    notional = 1e8, second_order = second_order)
+  }
+  r <- value(second_order = TRUE)
+  plain <- value()
+  # the value and the first derivatives are the same with or without the second derivatives
+  expect_identical(r$summary, plain$summary)
+  expect_identical(r$sensitivity, plain$sensitivity)
+  expect_identical(r$curve_sensitivity, plain$curve_sensitivity)
+  expect_false("second_order" %in% names(plain))
+  expect_named(r$second_order, c("parameter_1", "parameter_2", "d2_npv"))
+  expect_identical(r$second_order$parameter_1, rep("spot", 3))
+  expect_identical(r$second_order$parameter_2, c("domestic_curve_shift", "foreign_curve_shift", "fx_volatility"))
+  d2 <- setNames(r$second_order$d2_npv, r$second_order$parameter_2)
+  four <- function(f, ha, hb) (f(ha, hb) - f(ha, -hb) - f(-ha, hb) + f(-ha, -hb)) / (4 * ha * hb)
+  npv <- function(...) value(...)$summary$value
+  expect_equal(d2[["domestic_curve_shift"]], four(function(a, b) npv(spot = 150 + a, shift_d = b), 0.05, 1e-4), tolerance = 1e-4)
+  expect_equal(d2[["foreign_curve_shift"]], four(function(a, b) npv(spot = 150 + a, shift_f = b), 0.05, 1e-4), tolerance = 1e-4)
+  expect_equal(d2[["fx_volatility"]], four(function(a, b) npv(spot = 150 + a, sx = 0.11 + b), 0.05, 1e-4), tolerance = 1e-4)
+  # the same mixed derivative as the central difference of the first derivative with respect to the volatility
+  vega <- function(spot) with(value(spot = spot)$sensitivity, d_npv[parameter == "fx_volatility"])
+  expect_equal(d2[["fx_volatility"]], (vega(150.01) - vega(149.99)) / 0.02, tolerance = 1e-4)
+  # flat curves too
+  jpy <- create_flat_curve("2026-11-02", 0.012, "actual_365_fixed", "continuous")
+  usd <- create_flat_curve("2026-11-02", 0.035, "actual_365_fixed", "continuous")
+  flat <- compute_prdc_three_factor_value(150, 0.11, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                          notional = 1e8, second_order = TRUE)
+  expect_true(all(is.finite(flat$second_order$d2_npv)))
+  # the closed form only
+  expect_error(compute_prdc_three_factor_value(150, 0.11, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                               paths = 1000L, call_dates = 2L, second_order = TRUE), "second_order")
+})
+
 test_that("a callable note's derivatives", {
   today <- "2026-11-02"
   jpy <- create_flat_curve(today, 0.012, "actual_365_fixed", "continuous")

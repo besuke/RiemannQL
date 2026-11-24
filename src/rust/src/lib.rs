@@ -2245,6 +2245,7 @@ fn compute_prdc_three_factor_value(
     make_whole: bool,
     knock_out_level: f64,
     knock_out_dates: Vec<i32>,
+    second_order: bool,
 ) -> List {
     let run = || -> Core<List> {
         if domestic_rate.len() != 2 || foreign_rate.len() != 2 || correlation.len() != 3 {
@@ -2290,6 +2291,9 @@ fn compute_prdc_three_factor_value(
                 curve_time.push(time);
                 d_curve.push(c.d_npv);
             }
+        }
+        if second_order && (target.is_finite() || make_whole || knock_out_level.is_finite() || !call_dates.is_empty()) {
+            return Err(rmql::Error::InvalidInput { reason: "second_order is for the closed form: no call, target redemption or knock-out".into() });
         }
         if target.is_finite() || make_whole || knock_out_level.is_finite() {
             if !call_dates.is_empty() || paths <= 0 {
@@ -2398,13 +2402,20 @@ fn compute_prdc_three_factor_value(
                 fx_vega_term = sens.fx_vega_term.clone()
             ));
         }
+        // the cross second derivatives of the closed form with the FX spot, by automatic differentiation (none with a call, a target or a knock-out)
+        let second: Vec<f64> = if second_order {
+            let s = prdc::compute_prdc_three_factor_second_order(&terms, &model)?;
+            vec![s.spot_domestic_curve_shift, s.spot_foreign_curve_shift, s.spot_fx_volatility]
+        } else {
+            Vec::new()
+        };
         let (value, standard_error) = if paths > 0 {
             prdc::compute_prdc_three_factor_monte_carlo(&terms, &model, size(paths, "paths")?, size(steps_per_year, "steps_per_year")?, seed as u64)?
         } else {
             (analytic, 0.0)
         };
         let effective: Vec<f64> = terms.coupon_times.iter().map(|&t| (model.fx_forward_variance(t) / t).sqrt()).collect();
-        Ok(list!(value = value, standard_error = standard_error, analytic = analytic, effective_volatility = effective, parameter = parameter, d_parameter = d_parameter, curve = curve, curve_date = curve_date, curve_time = curve_time, d_curve = d_curve, fx_vega_term = sens.fx_vega_term.clone()))
+        Ok(list!(value = value, standard_error = standard_error, analytic = analytic, effective_volatility = effective, parameter = parameter, d_parameter = d_parameter, curve = curve, curve_date = curve_date, curve_time = curve_time, d_curve = d_curve, fx_vega_term = sens.fx_vega_term.clone(), second_order = second))
     };
     outcome(run())
 }

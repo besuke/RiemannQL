@@ -35,7 +35,8 @@ compute_prdc_three_factor_value(
   make_whole = FALSE,
   knock_out_level = Inf,
   knock_out_dates = NULL,
-  fx_volatility_times = NULL
+  fx_volatility_times = NULL,
+  second_order = FALSE
 )
 }
 \arguments{
@@ -89,6 +90,8 @@ divided by the step, so a small step makes the estimate noisy.}
 of them.}
 
 \item{fx_volatility_times}{\code{NULL} for a constant FX volatility, or the end of each piece in years (increasing).}
+
+\item{second_order}{\code{TRUE} to add \code{second_order} to the result (see Value). Not with a call, a target or a knock-out.}
 }
 \value{
 A list with \code{summary}, a one-row tibble with \code{value}, \code{standard_error} (0 for the closed form) and
@@ -105,6 +108,10 @@ tibble of the call dates' \code{call_probability}, \code{call_sensitivity} a tib
 tibble (\code{parameter}, \code{d_npv}, \code{standard_error}, \code{changed_paths}) of the note's derivatives, and
 \code{path_curve_sensitivity} its curve nodes. With \code{fx_volatility_times}, \code{fx_vega_term} is a tibble of the closed
 form's derivative with respect to each piece (\code{end}, \code{d_npv}); the \code{fx_volatility} rows are for a parallel shift.
+With \code{second_order = TRUE}, \code{second_order} is a tibble (\code{parameter_1}, \code{parameter_2}, \code{d2_npv}) of the closed form's second
+derivatives that cross the spot with a parallel shift of the domestic curve's continuous zero rates (\code{"domestic_curve_shift"}),
+with the same shift of the foreign curve (\code{"foreign_curve_shift"}), and with the FX volatility (\code{"fx_volatility"}), by automatic
+differentiation. The shifts are in decimals (0.0001 is 1 bp), the spot in domestic currency, the volatility in decimals.
 }
 \description{
 The note of \code{\link[=compute_prdc_value]{compute_prdc_value()}} in a three-factor model under the domestic risk-neutral measure: Hull-White

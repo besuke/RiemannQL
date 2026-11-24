@@ -466,6 +466,18 @@ impl<T: Operand> YieldCurve<T> {
         }
     }
 
+    /// The curve with `shift` added to its continuous zero rates (a parallel shift). `shift` can be a recorded variable, so
+    /// that the derivative with respect to a parallel shift of the whole curve is one automatic-differentiation input.
+    pub(crate) fn with_zero_shift(self, shift: T) -> YieldCurve<T> {
+        let (reference_date, day_count, extrapolate) = (self.reference_date, self.day_count.clone(), self.extrapolate);
+        YieldCurve {
+            reference_date,
+            day_count,
+            extrapolate,
+            shape: Shape::ZeroSpreaded { base: Box::new(self), spread: shift, compounding: Compounding::Continuous, frequency: 0 },
+        }
+    }
+
     /// The same curve with extrapolation allowed or not.
     pub fn with_extrapolation(mut self, extrapolate: bool) -> YieldCurve<T> {
         self.extrapolate = extrapolate;

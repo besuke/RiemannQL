@@ -112,6 +112,7 @@ compute_prdc_value <- function(spot, volatility, domestic_curve, foreign_curve, 
 #' @param knock_out_level FX level (domestic per foreign) of the knock-out; `Inf` for none.
 #' @param knock_out_dates Positions in `coupon_times` where the knock-out is observed, before the last; `NULL` for all
 #'   of them.
+#' @param second_order `TRUE` to add `second_order` to the result (see Value). Not with a call, a target or a knock-out.
 #' @param bump Step of the callable, target and knock-out notes' central differences. Paths that cross a boundary add a jump
 #'   divided by the step, so a small step makes the estimate noisy.
 #' @return A list with `summary`, a one-row tibble with `value`, `standard_error` (0 for the closed form) and
@@ -128,6 +129,10 @@ compute_prdc_value <- function(spot, volatility, domestic_curve, foreign_curve, 
 #'   tibble (`parameter`, `d_npv`, `standard_error`, `changed_paths`) of the note's derivatives, and
 #'   `path_curve_sensitivity` its curve nodes. With `fx_volatility_times`, `fx_vega_term` is a tibble of the closed
 #'   form's derivative with respect to each piece (`end`, `d_npv`); the `fx_volatility` rows are for a parallel shift.
+#'   With `second_order = TRUE`, `second_order` is a tibble (`parameter_1`, `parameter_2`, `d2_npv`) of the closed form's second
+#'   derivatives that cross the spot with a parallel shift of the domestic curve's continuous zero rates (`"domestic_curve_shift"`),
+#'   with the same shift of the foreign curve (`"foreign_curve_shift"`), and with the FX volatility (`"fx_volatility"`), by automatic
+#'   differentiation. The shifts are in decimals (0.0001 is 1 bp), the spot in domestic currency, the volatility in decimals.
 #' @examples
 #' tenors <- c("1Y", "3Y", "5Y", "7Y")
 #' jpy_quotes <- create_ois_instruments(tenors, c(0.01, 0.012, 0.014, 0.016), 2L, 1L, 0L)
@@ -143,7 +148,7 @@ compute_prdc_three_factor_value <- function(spot, fx_volatility, domestic_curve,
                                             paths = 0L, steps_per_year = 12L, seed = 1, call_dates = integer(), call_price = redemption,
                                             training_seed = seed + 1, training_paths = paths, bump = 1e-3,
                                             target = Inf, target_coupon = "capped", make_whole = FALSE, knock_out_level = Inf,
-                                            knock_out_dates = NULL, fx_volatility_times = NULL) {
+                                            knock_out_dates = NULL, fx_volatility_times = NULL, second_order = FALSE) {
   i <- tibble(coupon_times = as.numeric(coupon_times), accrual_fractions = as.numeric(accrual_fractions), fixed_rate = as.numeric(fixed_rate))
   ends <- if (is.null(fx_volatility_times)) numeric() else as.numeric(fx_volatility_times)
   x <- checked(.Call(wrap__compute_prdc_three_factor_value, as.numeric(spot), as.numeric(fx_volatility), ends, domestic_curve$pointer,
@@ -153,13 +158,18 @@ compute_prdc_three_factor_value <- function(spot, fx_volatility, domestic_curve,
                      as.integer(steps_per_year), as.numeric(seed), as.integer(call_dates) - 1L, as.numeric(call_price),
                      as.numeric(training_seed), as.integer(training_paths), as.numeric(bump), as.numeric(target),
                      match.arg(target_coupon, c("capped", "full")), as_flag(make_whole), as.numeric(knock_out_level),
-                     if (is.null(knock_out_dates)) seq_len(max(length(coupon_times) - 1L, 0L)) - 1L else as.integer(knock_out_dates) - 1L))
+                     if (is.null(knock_out_dates)) seq_len(max(length(coupon_times) - 1L, 0L)) - 1L else as.integer(knock_out_dates) - 1L,
+                     as_flag(second_order)))
   out <- list(summary = tibble(value = x$value, standard_error = x$standard_error, analytic = x$analytic),
               coupons = tibble(time = i$coupon_times, effective_volatility = x$effective_volatility),
               sensitivity = tibble(parameter = x$parameter, d_npv = x$d_parameter),
               curve_sensitivity = tibble(curve = x$curve, date = as_date(x$curve_date), time = x$curve_time, d_npv = x$d_curve,
                                          npv_per_bp = -x$d_curve * x$curve_time * 1e-4))
   if (length(ends) > 0L) out$fx_vega_term <- tibble(end = ends, d_npv = x$fx_vega_term)
+  if (isTRUE(second_order)) {
+    out$second_order <- tibble(parameter_1 = "spot", parameter_2 = c("domestic_curve_shift", "foreign_curve_shift", "fx_volatility"),
+                               d2_npv = x$second_order)
+  }
   if (length(call_dates) > 0L) {
     out$summary <- tibble::add_column(out$summary, noncallable_value = x$noncallable_value, hindsight_value = x$hindsight_value)
     out$calls <- tibble(call_date = as.integer(call_dates), time = i$coupon_times[call_dates], call_probability = x$call_probability)

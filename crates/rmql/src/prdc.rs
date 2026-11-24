@@ -617,6 +617,53 @@ pub fn compute_prdc_three_factor_sensitivity(terms: &PrdcTerms, model: &PrdcThre
     })
 }
 
+/// The second derivatives of the three-factor closed form that mix the FX spot with the curves and the FX volatility.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrdcThreeFactorSecondOrder {
+    pub npv: f64,
+    /// The first derivative with respect to the spot (as in [`PrdcThreeFactorSensitivity`]).
+    pub fx_delta: f64,
+    /// `d2 NPV / dS dr_d`, `r_d` a parallel shift of the continuous zero rates of the domestic curve (0.0001 is 1 bp).
+    pub spot_domestic_curve_shift: f64,
+    /// `d2 NPV / dS dr_f`, `r_f` the same shift of the foreign curve.
+    pub spot_foreign_curve_shift: f64,
+    /// `d2 NPV / dS d sigma_X`, `sigma_X` the FX volatility (every piece moved by the same amount).
+    pub spot_fx_volatility: f64,
+}
+
+/// The cross second derivatives of the closed form of [`compute_prdc_three_factor_sensitivity`] with the FX spot, by automatic
+/// differentiation: the backward pass that gives the delta is recorded ([`Recorder::gradient_vars`]) and differentiated once
+/// more with respect to a parallel shift of each curve and the FX volatility. The parallel shift is one input, added to the
+/// continuous zero rates of the curve (`YieldCurve::with_zero_shift`), so it does not depend on the curve's inputs.
+pub fn compute_prdc_three_factor_second_order(terms: &PrdcTerms, model: &PrdcThreeFactor) -> Result<PrdcThreeFactorSecondOrder, Error> {
+    terms.check()?;
+    model.check()?;
+    let recorder = Recorder::new();
+    let spot = recorder.input(model.spot);
+    let plain = model.parameters();
+    let fx_volatility: Vec<Var> = plain.fx_volatility.iter().map(|&v| recorder.input(v)).collect();
+    let pieces = fx_volatility.len();
+    let domestic = (recorder.constant(model.domestic_rate.mean_reversion), recorder.constant(model.domestic_rate.volatility));
+    let foreign = (recorder.constant(model.foreign_rate.mean_reversion), recorder.constant(model.foreign_rate.volatility));
+    let correlation = model.correlation.map(|r| recorder.constant(r));
+    let (shift_d, shift_f) = (recorder.input(0.0), recorder.input(0.0));
+    let d = model.domestic.lift(&recorder)?.curve.with_zero_shift(shift_d);
+    let f = model.foreign.lift(&recorder)?.curve.with_zero_shift(shift_f);
+    let p = ThreeFactorParameters { fx_volatility: fx_volatility.clone(), fx_ends: plain.fx_ends, domestic, foreign, correlation };
+    let npv = three_factor_analytic_of(terms, spot, &d, &f, &p)?;
+    let delta = recorder.gradient_vars(npv, &[spot])?[0];
+    let mut wrt = fx_volatility;
+    wrt.extend([shift_d, shift_f]);
+    let second: Vec<f64> = recorder.gradient(delta.average(), &wrt)?.iter().map(|x| x.mean()).collect();
+    Ok(PrdcThreeFactorSecondOrder {
+        npv: npv.primal(),
+        fx_delta: delta.value().mean(),
+        spot_domestic_curve_shift: second[pieces],
+        spot_foreign_curve_shift: second[pieces + 1],
+        spot_fx_volatility: second[..pieces].iter().sum(),
+    })
+}
+
 /// The states of the three-factor paths on the coupon dates: `discount[p][i]` is
 /// `exp(-int_0^{T_i} r_d)` and `fx[p][i]` is `S(T_i)` on path `p`.
 #[derive(Debug, Clone, PartialEq)]
@@ -2130,6 +2177,46 @@ mod tests {
         let simple = compute_prdc_analytic(&t, 150.0, 0.11, &d, &f).unwrap();
         let three = compute_prdc_three_factor_sensitivity(&t, &flat).unwrap();
         assert!((three.fx_delta / simple.fx_delta - 1.0).abs() < 1e-10 && (three.fx_vega / simple.fx_vega - 1.0).abs() < 1e-10);
+    }
+
+    /// The curve with every log discount factor moved by `-h t`: a parallel shift of the continuous zero rates by `h`.
+    fn shifted_curve(rates: &[f64], h: f64) -> YieldCurve {
+        let today = Date::from_ymd(2026, 11, 2).unwrap();
+        let mut dates = vec![today];
+        let mut discounts = vec![1.0];
+        let mut sum = 0.0;
+        for (i, r) in rates.iter().enumerate() {
+            sum += r;
+            let t = 365.0 * (i as f64 + 1.0) / 365.0;
+            dates.push(Date::from_serial(today.serial() as i64 + 365 * (i as i64 + 1)).unwrap());
+            discounts.push((-sum - h * t).exp());
+        }
+        YieldCurve::interpolated_discounts(dates, discounts, dc(), LogDiscountInterpolation::LogLinear).unwrap()
+    }
+
+    #[test]
+    fn the_second_order_cross_derivatives_agree_with_four_point_differences() {
+        let (d, f) = (jpy(), foreign());
+        let model = three_factor(&d, &f, [0.01, 0.012], [0.3, -0.2, 0.4]);
+        let t = terms();
+        let first = compute_prdc_three_factor_sensitivity(&t, &model).unwrap();
+        let second = compute_prdc_three_factor_second_order(&t, &model).unwrap();
+        // the value and the first derivative do not change
+        assert!((second.npv / first.npv - 1.0).abs() < 1e-12, "{} against {}", second.npv, first.npv);
+        assert!((second.fx_delta / first.fx_delta - 1.0).abs() < 1e-9, "{} against {}", second.fx_delta, first.fx_delta);
+        let (jpy_rates, foreign_rates) = ([0.01, 0.012, 0.014, 0.016, 0.018], [0.04, 0.038, 0.036, 0.034, 0.032]);
+        let value = |spot: f64, volatility: f64, hd: f64, hf: f64| {
+            let (dd, ff) = (shifted_curve(&jpy_rates, hd), shifted_curve(&foreign_rates, hf));
+            compute_prdc_three_factor_analytic(&t, &PrdcThreeFactor { spot, fx_volatility: volatility, domestic: &dd, foreign: &ff, ..model }).unwrap()
+        };
+        let (hs, hr, hv) = (0.05, 1e-4, 1e-4);
+        let four = |f: &dyn Fn(f64, f64) -> f64, ha: f64, hb: f64| (f(ha, hb) - f(ha, -hb) - f(-ha, hb) + f(-ha, -hb)) / (4.0 * ha * hb);
+        let numeric_d = four(&|a, b| value(150.0 + a, 0.11, b, 0.0), hs, hr);
+        let numeric_f = four(&|a, b| value(150.0 + a, 0.11, 0.0, b), hs, hr);
+        let numeric_v = four(&|a, b| value(150.0 + a, 0.11 + b, 0.0, 0.0), hs, hv);
+        for (name, got, numeric) in [("domestic", second.spot_domestic_curve_shift, numeric_d), ("foreign", second.spot_foreign_curve_shift, numeric_f), ("fx vol", second.spot_fx_volatility, numeric_v)] {
+            assert!((got - numeric).abs() < 1e-4 * numeric.abs(), "{name}: {got} against {numeric}");
+        }
     }
 
     #[test]

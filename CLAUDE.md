@@ -54,6 +54,7 @@ Rust の金融計算ライブラリー。利用の主体は R（extendr）で、
 | Carmine-Studio | 照合に使った rmql のコミットを固定する | 同 #5 | 0.3.2 は Releases の zip と `RemoteSha` で固定できるようになった。クライアント側の記録は未更新 |
 | Carmine-Studio | ブラウザーで直接動かす（WebAssembly 版） | 同 #6 | L1〜L3 は未着手 |
 | Carmine-Studio | 元本リセット型 CCS、FX スワップによる受渡日の調整、CCS の期間構造の校正 | `README.md` の円換算 ASW の「未対応」 | 一部の部品（`create_xccy_instruments` の `resetting`、`bootstrap_xccy_curve`）はある。クライアントから使える形かは未確認 |
+| Carmine-Studio | コールなし3因子 PRDC の2階感応度：クロスガンマ（スポット × 円／外貨ゼロ金利カーブの平行シフト）と Vanna（スポット × FX ボラ）の2階自動微分 | Carmine-Studio `docs/rmql_request_prdc_second_order.md` | **実装済み（2026-11-24）、未コミット**：R は `compute_prdc_three_factor_value(second_order = TRUE)` の `second_order`。Rust は `compute_prdc_three_factor_second_order`（`docs/spec_prdc.md` 15 章）。バンプ幅・許容誤差・参照値の詰めと版の公開は未了 |
 | Infrago Quant | 他の PC で動かすための TRS・IRRBB の公開 | `CLAUDE.md` の状態（2026-11-16） | 解消。`main` に入り、0.3.2 の zip に含まれる |
 | Crimson Proof | 描画時に Rust をビルドしない（導入済みのパッケージを使う） | `CLAUDE.md` | 0.3.2 の zip で満たせる |
 
