@@ -141,6 +141,51 @@ test_that("the cross second derivatives with the spot, by automatic differentiat
                                                paths = 1000L, call_dates = 2L, second_order = TRUE), "second_order")
 })
 
+test_that("second_order = 'full' gives the ten second derivatives and keeps the three of TRUE", {
+  k <- prdc_curves()
+  rho <- c(0.3, -0.2, 0.4)
+  value <- function(spot = 150, sx = 0.11, shift_d = 0, shift_f = 0, second_order = FALSE) {
+    jpy <- if (shift_d == 0) k$jpy else create_zero_spreaded_curve(k$jpy, shift_d, "continuous")
+    usd <- if (shift_f == 0) k$usd else create_zero_spreaded_curve(k$usd, shift_f, "continuous")
+    compute_prdc_three_factor_value(spot, sx, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                    notional = 1e8, second_order = second_order)
+  }
+  full <- value(second_order = "full")
+  cross <- value(second_order = TRUE)
+  plain <- value()
+  # the value and the first derivatives do not change; TRUE keeps its three rows
+  expect_identical(full$summary, plain$summary)
+  expect_identical(full$sensitivity, plain$sensitivity)
+  expect_identical(full$curve_sensitivity, plain$curve_sensitivity)
+  expect_equal(nrow(cross$second_order), 3L)
+  expect_equal(nrow(full$second_order), 10L)
+  expect_identical(full$second_order[1:3, ], cross$second_order)
+  expect_false(anyDuplicated(paste(full$second_order$parameter_1, full$second_order$parameter_2)) > 0)
+  d2 <- function(a, b) full$second_order$d2_npv[full$second_order$parameter_1 == a & full$second_order$parameter_2 == b]
+  # the matrix against differences of the value (three-point on the diagonal, four-point elsewhere)
+  npv <- function(x) value(spot = 150 + x[1], sx = 0.11 + x[2], shift_d = x[3], shift_f = x[4])$summary$value
+  w <- c(0.5, 1e-3, 1e-4, 1e-4)
+  v0 <- npv(rep(0, 4))
+  at <- function(i, a, j = i, b = 0) { x <- rep(0, 4); x[i] <- x[i] + a * w[i]; x[j] <- x[j] + b * w[j]; npv(x) }
+  diag2 <- function(i) (at(i, 1) - 2 * v0 + at(i, -1)) / w[i]^2
+  mixed <- function(i, j) (at(i, 1, j, 1) - at(i, 1, j, -1) - at(i, -1, j, 1) + at(i, -1, j, -1)) / (4 * w[i] * w[j])
+  expect_equal(d2("spot", "spot"), diag2(1), tolerance = 3e-3)
+  expect_equal(d2("fx_volatility", "fx_volatility"), diag2(2), tolerance = 3e-3)
+  expect_equal(d2("domestic_curve_shift", "domestic_curve_shift"), diag2(3), tolerance = 3e-3)
+  expect_equal(d2("foreign_curve_shift", "foreign_curve_shift"), diag2(4), tolerance = 3e-3)
+  expect_equal(d2("domestic_curve_shift", "foreign_curve_shift"), mixed(3, 4), tolerance = 3e-3)
+  expect_equal(d2("domestic_curve_shift", "fx_volatility"), mixed(3, 2), tolerance = 3e-3)
+  expect_equal(d2("foreign_curve_shift", "fx_volatility"), mixed(4, 2), tolerance = 3e-3)
+  expect_equal(d2("spot", "fx_volatility"), mixed(1, 2), tolerance = 3e-3)
+  # only the closed form, and only the values the argument allows
+  jpy <- create_flat_curve("2026-11-02", 0.012, "actual_365_fixed", "continuous")
+  usd <- create_flat_curve("2026-11-02", 0.035, "actual_365_fixed", "continuous")
+  expect_error(compute_prdc_three_factor_value(150, 0.11, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                               paths = 1000L, call_dates = 2L, second_order = "full"), "second_order")
+  expect_error(compute_prdc_three_factor_value(150, 0.11, jpy, usd, c(0.03, 0.01), c(0.05, 0.012), rho, 1:5, rep(1, 5), 150, 0.8, 0.78, 0, 0.08,
+                                               second_order = "all"), "second_order")
+})
+
 test_that("a callable note's derivatives", {
   today <- "2026-11-02"
   jpy <- create_flat_curve(today, 0.012, "actual_365_fixed", "continuous")

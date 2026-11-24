@@ -664,6 +664,48 @@ pub fn compute_prdc_three_factor_second_order(terms: &PrdcTerms, model: &PrdcThr
     })
 }
 
+/// The second derivatives of the three-factor closed form among four variables: the FX spot, the FX volatility (every piece moved by
+/// the same amount), and a parallel shift of the continuous zero rates of the domestic and of the foreign curve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrdcThreeFactorHessian {
+    pub npv: f64,
+    /// Rows and columns in the order: the spot, the FX volatility, the domestic curve's shift, the foreign curve's shift. Symmetric.
+    pub hessian: [[f64; 4]; 4],
+}
+
+/// The whole table of second derivatives of the closed form of [`compute_prdc_three_factor_sensitivity`] among the spot, the FX
+/// volatility and the two curves' parallel shifts, by automatic differentiation: the backward pass is recorded
+/// ([`Recorder::gradient_vars`]) and each first derivative is differentiated once more. The FX volatility is one input added to every piece,
+/// and the shifts are inputs added to the curves' continuous zero rates (`YieldCurve::with_zero_shift`). The entries that cross the spot
+/// are those of [`compute_prdc_three_factor_second_order`].
+pub fn compute_prdc_three_factor_hessian(terms: &PrdcTerms, model: &PrdcThreeFactor) -> Result<PrdcThreeFactorHessian, Error> {
+    terms.check()?;
+    model.check()?;
+    let recorder = Recorder::new();
+    let spot = recorder.input(model.spot);
+    let plain = model.parameters();
+    let shift_v = recorder.input(0.0);
+    let fx_volatility: Vec<Var> = plain.fx_volatility.iter().map(|&v| recorder.constant(v) + shift_v).collect();
+    let domestic = (recorder.constant(model.domestic_rate.mean_reversion), recorder.constant(model.domestic_rate.volatility));
+    let foreign = (recorder.constant(model.foreign_rate.mean_reversion), recorder.constant(model.foreign_rate.volatility));
+    let correlation = model.correlation.map(|r| recorder.constant(r));
+    let (shift_d, shift_f) = (recorder.input(0.0), recorder.input(0.0));
+    let d = model.domestic.lift(&recorder)?.curve.with_zero_shift(shift_d);
+    let f = model.foreign.lift(&recorder)?.curve.with_zero_shift(shift_f);
+    let p = ThreeFactorParameters { fx_volatility, fx_ends: plain.fx_ends, domestic, foreign, correlation };
+    let npv = three_factor_analytic_of(terms, spot, &d, &f, &p)?;
+    let x = [spot, shift_v, shift_d, shift_f];
+    let first = recorder.gradient_vars(npv, &x)?;
+    let mut hessian = [[0.0; 4]; 4];
+    for (i, derivative) in first.iter().enumerate() {
+        let row = recorder.gradient(derivative.average(), &x)?;
+        for (j, v) in row.iter().enumerate() {
+            hessian[i][j] = v.mean();
+        }
+    }
+    Ok(PrdcThreeFactorHessian { npv: npv.primal(), hessian })
+}
+
 /// The states of the three-factor paths on the coupon dates: `discount[p][i]` is
 /// `exp(-int_0^{T_i} r_d)` and `fx[p][i]` is `S(T_i)` on path `p`.
 #[derive(Debug, Clone, PartialEq)]
@@ -2217,6 +2259,73 @@ mod tests {
         for (name, got, numeric) in [("domestic", second.spot_domestic_curve_shift, numeric_d), ("foreign", second.spot_foreign_curve_shift, numeric_f), ("fx vol", second.spot_fx_volatility, numeric_v)] {
             assert!((got - numeric).abs() < 1e-4 * numeric.abs(), "{name}: {got} against {numeric}");
         }
+    }
+
+    #[test]
+    fn the_full_second_derivatives_agree_with_differences_and_are_symmetric() {
+        use crate::curves::CurveInput;
+        let (d, f) = (jpy(), foreign());
+        let model = three_factor(&d, &f, [0.01, 0.012], [0.3, -0.2, 0.4]);
+        let t = terms();
+        let full = compute_prdc_three_factor_hessian(&t, &model).unwrap();
+        let cross = compute_prdc_three_factor_second_order(&t, &model).unwrap();
+        let first = compute_prdc_three_factor_sensitivity(&t, &model).unwrap();
+        let h = full.hessian;
+        // the entries that cross the spot are those of the cross second derivatives, and the value is the same
+        assert!((full.npv / first.npv - 1.0).abs() < 1e-12);
+        for (got, want, name) in [(h[0][2], cross.spot_domestic_curve_shift, "domestic"), (h[0][3], cross.spot_foreign_curve_shift, "foreign"), (h[0][1], cross.spot_fx_volatility, "volatility")] {
+            assert!((got / want - 1.0).abs() < 1e-9, "{name}: {got} against {want}");
+        }
+        // the matrix is symmetric: each mixed derivative is reached by differentiating in either order
+        for (i, row) in h.iter().enumerate() {
+            for (j, &v) in row.iter().enumerate() {
+                assert!((v - h[j][i]).abs() <= 1e-9 * v.abs().max(1.0), "{i},{j}: {v} against {}", h[j][i]);
+            }
+        }
+        // differences of the value: three-point on the diagonal, four-point elsewhere
+        let (jpy_rates, foreign_rates) = ([0.01, 0.012, 0.014, 0.016, 0.018], [0.04, 0.038, 0.036, 0.034, 0.032]);
+        let value = |x: [f64; 4]| {
+            let (dd, ff) = (shifted_curve(&jpy_rates, x[2]), shifted_curve(&foreign_rates, x[3]));
+            compute_prdc_three_factor_analytic(&t, &PrdcThreeFactor { spot: 150.0 + x[0], fx_volatility: 0.11 + x[1], domestic: &dd, foreign: &ff, ..model }).unwrap()
+        };
+        let w = [0.5, 1e-3, 1e-4, 1e-4];
+        let v0 = value([0.0; 4]);
+        for i in 0..4 {
+            for j in i..4 {
+                let numeric = if i == j {
+                    let at = |s: f64| { let mut x = [0.0; 4]; x[i] = s * w[i]; value(x) };
+                    (at(1.0) - 2.0 * v0 + at(-1.0)) / (w[i] * w[i])
+                } else {
+                    let at = |a: f64, b: f64| { let mut x = [0.0; 4]; x[i] = a * w[i]; x[j] = b * w[j]; value(x) };
+                    (at(1.0, 1.0) - at(1.0, -1.0) - at(-1.0, 1.0) + at(-1.0, -1.0)) / (4.0 * w[i] * w[j])
+                };
+                assert!((h[i][j] - numeric).abs() < 3e-3 * numeric.abs(), "{i},{j}: {} against {numeric}", h[i][j]);
+            }
+        }
+        // the second-order Taylor expansion leaves a third-order error: it falls by 8 when the move is halved
+        let shift_slope = |domestic: bool| -> f64 {
+            first.curves.iter().filter(|c| c.domestic == domestic).map(|c| if let CurveInput::LogDiscount { time, .. } = c.input { -time * c.d_npv } else { 0.0 }).sum()
+        };
+        let g = [first.fx_delta, first.fx_vega, shift_slope(true), shift_slope(false)];
+        let m = [4.0, 0.02, 0.002, -0.002];
+        let residual = |s: f64| {
+            let x = [s * m[0], s * m[1], s * m[2], s * m[3]];
+            let linear: f64 = (0..4).map(|i| g[i] * x[i]).sum();
+            let quadratic: f64 = (0..4).map(|i| (0..4).map(|j| h[i][j] * x[i] * x[j]).sum::<f64>()).sum::<f64>() * 0.5;
+            (value(x) - v0 - linear - quadratic, quadratic)
+        };
+        let ((r1, q1), (r2, _)) = (residual(0.5), residual(0.25));
+        assert!(r1.abs() < 0.1 * q1.abs(), "the residual {r1} is not small against the second-order term {q1}");
+        assert!((r1 / r2 - 8.0).abs() < 1.5, "the residual falls by {} when the move is halved (8 expected)", r1 / r2);
+        // without rate volatility the note is the one-factor note: the gamma and the volga are its second derivatives
+        let flat = three_factor(&d, &f, [0.0, 0.0], [0.3, -0.2, 0.4]);
+        let hf = compute_prdc_three_factor_hessian(&t, &flat).unwrap().hessian;
+        let delta = |s: f64| compute_prdc_analytic(&t, s, 0.11, &d, &f).unwrap().fx_delta;
+        let gamma = (delta(150.01) - delta(149.99)) / 0.02;
+        assert!((hf[0][0] / gamma - 1.0).abs() < 1e-6, "gamma {} against {gamma}", hf[0][0]);
+        let vega = |v: f64| compute_prdc_analytic(&t, 150.0, v, &d, &f).unwrap().fx_vega;
+        let volga = (vega(0.11 + 1e-5) - vega(0.11 - 1e-5)) / 2e-5;
+        assert!((hf[1][1] / volga - 1.0).abs() < 1e-5, "volga {} against {volga}", hf[1][1]);
     }
 
     #[test]

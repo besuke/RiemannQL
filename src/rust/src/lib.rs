@@ -2245,7 +2245,7 @@ fn compute_prdc_three_factor_value(
     make_whole: bool,
     knock_out_level: f64,
     knock_out_dates: Vec<i32>,
-    second_order: bool,
+    second_order: i32,
 ) -> List {
     let run = || -> Core<List> {
         if domestic_rate.len() != 2 || foreign_rate.len() != 2 || correlation.len() != 3 {
@@ -2292,7 +2292,7 @@ fn compute_prdc_three_factor_value(
                 d_curve.push(c.d_npv);
             }
         }
-        if second_order && (target.is_finite() || make_whole || knock_out_level.is_finite() || !call_dates.is_empty()) {
+        if second_order != 0 && (target.is_finite() || make_whole || knock_out_level.is_finite() || !call_dates.is_empty()) {
             return Err(rmql::Error::InvalidInput { reason: "second_order is for the closed form: no call, target redemption or knock-out".into() });
         }
         if target.is_finite() || make_whole || knock_out_level.is_finite() {
@@ -2403,11 +2403,18 @@ fn compute_prdc_three_factor_value(
             ));
         }
         // the cross second derivatives of the closed form with the FX spot, by automatic differentiation (none with a call, a target or a knock-out)
-        let second: Vec<f64> = if second_order {
-            let s = prdc::compute_prdc_three_factor_second_order(&terms, &model)?;
-            vec![s.spot_domestic_curve_shift, s.spot_foreign_curve_shift, s.spot_fx_volatility]
-        } else {
-            Vec::new()
+        // second_order 1: the three cross second derivatives with the spot; 2: all ten entries of the table among the spot, the FX volatility
+        // and the two curves' shifts, in the order the R function names them
+        let second: Vec<f64> = match second_order {
+            0 => Vec::new(),
+            1 => {
+                let s = prdc::compute_prdc_three_factor_second_order(&terms, &model)?;
+                vec![s.spot_domestic_curve_shift, s.spot_foreign_curve_shift, s.spot_fx_volatility]
+            }
+            _ => {
+                let h = prdc::compute_prdc_three_factor_hessian(&terms, &model)?.hessian;
+                vec![h[0][2], h[0][3], h[0][1], h[0][0], h[1][1], h[2][2], h[3][3], h[2][3], h[1][2], h[1][3]]
+            }
         };
         let (value, standard_error) = if paths > 0 {
             prdc::compute_prdc_three_factor_monte_carlo(&terms, &model, size(paths, "paths")?, size(steps_per_year, "steps_per_year")?, seed as u64)?

@@ -91,7 +91,9 @@ of them.}
 
 \item{fx_volatility_times}{\code{NULL} for a constant FX volatility, or the end of each piece in years (increasing).}
 
-\item{second_order}{\code{TRUE} to add \code{second_order} to the result (see Value). Not with a call, a target or a knock-out.}
+\item{second_order}{\code{FALSE} (default), \code{TRUE} or \code{"full"}: \code{TRUE} adds \code{second_order} with the three cross second derivatives with the spot,
+\code{"full"} adds all ten second derivatives among the spot, the FX volatility and the shifts of the two curves (see Value). Not with a call, a
+target or a knock-out.}
 }
 \value{
 A list with \code{summary}, a one-row tibble with \code{value}, \code{standard_error} (0 for the closed form) and
@@ -112,6 +114,10 @@ With \code{second_order = TRUE}, \code{second_order} is a tibble (\code{paramete
 derivatives that cross the spot with a parallel shift of the domestic curve's continuous zero rates (\code{"domestic_curve_shift"}),
 with the same shift of the foreign curve (\code{"foreign_curve_shift"}), and with the FX volatility (\code{"fx_volatility"}), by automatic
 differentiation. The shifts are in decimals (0.0001 is 1 bp), the spot in domestic currency, the volatility in decimals.
+With \code{second_order = "full"} the tibble has ten rows: those three first, in that order and with the same values, then the gamma
+(\code{"spot"}, \code{"spot"}), the volga (\code{"fx_volatility"} twice), the second derivative of each curve's shift (the domestic and the foreign
+twice), the cross of the two shifts, and the crosses of each shift with the volatility. Each pair is one row (the table is symmetric);
+a row is found by \code{parameter_1} and \code{parameter_2} together.
 }
 \description{
 The note of \code{\link[=compute_prdc_value]{compute_prdc_value()}} in a three-factor model under the domestic risk-neutral measure: Hull-White
